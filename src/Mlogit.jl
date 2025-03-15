@@ -1,5 +1,9 @@
 module Mlogit
+export mlogit
 
-# Write your package code here.
+include("utils.jl")
+
+include("MNLmodel.jl")
+include("mlogit.jl")
 
 end
