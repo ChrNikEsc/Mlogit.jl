@@ -1,11 +1,3 @@
-using DataFrames
-using Optim, Distributions, LineSearches
-import ForwardDiff
-using FiniteDifferences
-using LinearAlgebra: diag, dot
-using RegressionTables
-
-
 function mlogit(
     formula::FormulaTerm,
     df,

@@ -1,8 +1,7 @@
 using Mlogit
 using Test
 
-using CSV, DataFrames, Pipe#, BenchmarkTools, Profile
-using StatsModels
+using CSV, DataFrames
 
 const glm_datadir = joinpath(dirname(@__FILE__), "..", "data/")
 

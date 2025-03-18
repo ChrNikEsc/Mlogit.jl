@@ -1,5 +1,4 @@
-using CSV, DataFrames, Pipe#, BenchmarkTools, Profile
-using StatsBase, StatsModels, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Distributions, Makie, CairoMakie, Combinatorics
+
 
 struct XlogitIndices
     chid::Symbol
