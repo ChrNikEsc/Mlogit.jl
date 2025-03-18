@@ -23,4 +23,6 @@ transform!(df_mlogit, :id => (x -> ifelse.(x .> 30, "a", "b")) => :cluster)
         df_mlogit,
         weights=:weight
     )
+
+    @test sum(model_mlogit.coef) ≈ -10.368346014522867
 end
