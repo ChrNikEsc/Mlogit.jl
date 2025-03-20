@@ -21,6 +21,9 @@ rename!(HCdata, Symbol.(replace.(String.(names(HCdata)), "." => "_")))
 transform!(HCdata, :id => :chid)
 transform!(HCdata, :alt => ByRow(x -> ifelse(x ∈ ["gcc", "ecc", "erc", "hpc"], "cooling", "others")) => :nest)
 
+# fmlogit
+df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
+
 @testset "Mlogit.jl" begin
     # mlogit
     model_mlogit = mlogit(
@@ -39,4 +42,11 @@ transform!(HCdata, :alt => ByRow(x -> ifelse(x ∈ ["gcc", "ecc", "erc", "hpc"],
     )
 
     @test round(sum(model_nlogit.coef), digits=6) ≈ -7.895003 # GitHub CI test with julia 1.9 failed when requiring more precision
+    
+    # fmlogit
+    model_fmlogit = fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=true)
 end
+
+
+
+
