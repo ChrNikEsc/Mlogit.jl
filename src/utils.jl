@@ -89,7 +89,7 @@ end
 
 function remap_to_indices_chid!(v)
     unique_vals = unique(v)
-    val_to_index = Dict(unique_vals .=> 1:length(unique_vals))
+    val_to_index = Dict(unique_vals .=> 1:Base.length(unique_vals))
     for i in eachindex(v)
         v[i] = val_to_index[v[i]]
     end
@@ -97,7 +97,7 @@ end
 
 function remap_to_indices(v)
     unique_vals = unique(v)
-    r = zeros(Int64, length(v))
+    r = zeros(Int64, Base.length(v))
     for i in eachindex(v)
         r[i] = findfirst(==(v[i]), unique_vals)
     end
@@ -108,8 +108,8 @@ function remap_to_indices_nest(v)
     # missing, nothing and 0 in the nest column are interpreted as no nest or being its own nest
         # same in xlogit.jl --> definition of coefnames_nests
     unique_vals = filter(x -> !ismissing(x) && !isnothing(x) && x != 0, unique(v))
-    val_to_index = Dict(unique_vals .=> 1:length(unique_vals))
-    result = Vector{Int}(undef, length(v))
+    val_to_index = Dict(unique_vals .=> 1:Base.length(unique_vals))
+    result = Vector{Int}(undef, Base.length(v))
     for i in eachindex(v)
         result[i] = ismissing(v[i]) ? 0 : get(val_to_index, v[i], 0)
     end
@@ -180,7 +180,7 @@ function get_weights(varname_weights::Union{String,Nothing}, dta::DataFrame; var
         error("varnames_structure: $(e)")
     end
 
-    n_chid = length(unique(dta[!, Symbol(varnames_structure.chid)]))
+    n_chid = Base.length(unique(dta[!, Symbol(varnames_structure.chid)]))
     vec_choice = convert.(Bool, dta[!, Symbol(varnames_structure.choice)])
 
     vec_weights = ones(n_chid)
@@ -290,7 +290,7 @@ end
 # Helper to get symbols from FunctionTerm for membership
 function membershipsymbol(t::FunctionTerm{typeof(membership)})
     # Handle both single and multiple terms inside membership()
-    if length(t.args) == 1
+    if Base.length(t.args) == 1
         return [t.args[1]]  # Single term (e.g., x1)
     else
         return t.args[1].args  # Multiple terms (e.g., x1 + x2)
