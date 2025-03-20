@@ -68,20 +68,20 @@ function StatsAPI.fit(::Type{MNLmodel},
 
     coef_names = nested ? vcat(coefnames_utility, coefnames_nests) : coefnames_utility
 
-    n_coefficients = length(coef_names)
+    n_coefficients = Base.length(coef_names)
 
     # Ids
-    n_id = length(unique(df[!, indices.id]))
+    n_id = Base.length(unique(df[!, indices.id]))
 
     # Chids
     vec_chid = convert.(Int64, df[!, indices.chid])
     # make sure that vec_chid can be used to index vectors of length length(unique(vec_chid))
     remap_to_indices_chid!(vec_chid)
-    n_chid = length(unique(vec_chid))
+    n_chid = Base.length(unique(vec_chid))
 
     # Weights
     if isnothing(weights)
-        vec_weights = ones(Float64, length(vec_choice))
+        vec_weights = ones(Float64, Base.length(vec_choice))
     else
         vec_weights = convert.(Float64, ((df[!, weights] ./ sum(df[!, weights])) .* nrows))
     end
@@ -89,7 +89,7 @@ function StatsAPI.fit(::Type{MNLmodel},
 
     # Start values
     coef_start = if isnothing(start)
-        [zeros(length(coefnames_utility)); ones(nested * (equal_lambdas + !equal_lambdas * length(unique(vec_nests))))]
+        [zeros(Base.length(coefnames_utility)); ones(nested * (equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests))))]
     else
         copy(start) # to prevent start from being mutated in place
     end
@@ -99,7 +99,7 @@ function StatsAPI.fit(::Type{MNLmodel},
     # Standardizing the matrix column-wise
     mean_X = vec(mean(mat_X, dims=1))
     std_X = vec(std(mat_X, dims=1))
-    extended_std_X = vcat(std_X, fill(1.0, length(coef_start) - length(std_X)))
+    extended_std_X = vcat(std_X, fill(1.0, Base.length(coef_start) - Base.length(std_X)))
     mat_X .= (mat_X .- mean_X') ./ std_X'
     coef_start .*= extended_std_X
 
@@ -162,17 +162,17 @@ end
 
 function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; method=Newton(), optim_options=Optim.Options())
 
-    n_chid = length(unique(vec_chid))
+    n_chid = Base.length(unique(vec_chid))
     idx_map = create_index_map(vec_chid)
-    n_coefficients = length(coef_start)
+    n_coefficients = Base.length(coef_start)
 
     # Initialize objects in fgh!
     exb = exp.(mat_X * coef_start)
     sexb = zeros(Float64, n_chid)
-    Pni = zeros(Float64, length(vec_chid))
-    Px = zeros(Float64, length(coef_start), n_chid)
-    yx = zeros(Float64, length(coef_start), n_chid)
-    gradi = zeros(Float64, n_chid, length(coef_start))
+    Pni = zeros(Float64, Base.length(vec_chid))
+    Px = zeros(Float64, Base.length(coef_start), n_chid)
+    yx = zeros(Float64, Base.length(coef_start), n_chid)
+    gradi = zeros(Float64, n_chid, Base.length(coef_start))
 
     function fgh!(F, G, H, theta)
         # Common computations
@@ -210,7 +210,7 @@ function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights
         end
 
         if H !== nothing
-            dxpx = zeros(eltype(theta), length(vec_chid), length(coef_start))
+            dxpx = zeros(eltype(theta), Base.length(vec_chid), Base.length(coef_start))
             @inbounds for i in eachindex(vec_chid), j in eachindex(theta)
                 dxpx[i, j] += mat_X[i, j] - Px[j, vec_chid[i]]
             end
@@ -262,9 +262,9 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
     n_nests = maximum(vec_nests_indices)  # Number of nests (excluding the outside option)
     nests = Dict(zip(unique(vec_nests), unique(vec_nests_indices)))
 
-    n_chid = length(unique(vec_chid))
+    n_chid = Base.length(unique(vec_chid))
     idx_map = create_index_map(vec_chid)
-    n_coefficients = length(coef_start)
+    n_coefficients = Base.length(coef_start)
     n_coefficients_utility = n_coefficients - !equal_lambdas * n_nests - equal_lambdas
 
     mat_X_choice = mat_X[vec_choice, :]
@@ -321,7 +321,7 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
             # Precompute things
             precomputed_multiplication = exp.(-V_choice ./ lambda_choice) .* safe_exp.(vec_sum_chid_nest, 1 .- lambda_choice) .* sum_sum_chid_nest_ttl
 
-            exp_adj_V_times_mat_X_nestsums = zeros(eltype(theta), n_chid, n_nests + 1, length(beta))
+            exp_adj_V_times_mat_X_nestsums = zeros(eltype(theta), n_chid, n_nests + 1, Base.length(beta))
             @inbounds for i in eachindex(vec_chid), b in eachindex(beta)
                 exp_adj_V_times_mat_X_nestsums[vec_chid[i], vec_nests_indices[i]+1, b] += exp_adj_V[i] * mat_X[i, b]
             end
@@ -367,9 +367,9 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
             end
 
             if equal_lambdas
-                gradi[:, (length(beta)+1):end] = sum(gradi_lambda, dims=2)
+                gradi[:, (Base.length(beta)+1):end] = sum(gradi_lambda, dims=2)
             else
-                gradi[:, (length(beta)+1):end] = gradi_lambda
+                gradi[:, (Base.length(beta)+1):end] = gradi_lambda
             end
             G .= -vec(sum(gradi, dims=1))
         end

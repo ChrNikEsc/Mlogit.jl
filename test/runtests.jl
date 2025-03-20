@@ -24,6 +24,9 @@ transform!(HCdata, :alt => ByRow(x -> ifelse(x ∈ ["gcc", "ecc", "erc", "hpc"],
 # fmlogit
 df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
 
+# lclogit
+df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
+
 @testset "Mlogit.jl" begin
     # mlogit
     model_mlogit = mlogit(
@@ -45,6 +48,10 @@ df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
     
     # fmlogit
     model_fmlogit = fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=true)
+
+    # lclogit
+    model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 4, method=:em)
+    model_lclogit_grad = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 4, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient)
 end
 
 

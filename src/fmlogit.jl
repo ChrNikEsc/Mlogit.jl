@@ -1,7 +1,3 @@
-include("MNLmodel.jl")
-include("FMLmodel.jl")
-include("RegressionTablesExt.jl")
-
 function fmlogit(
     formula::FormulaTerm,
     df::DataFrame;
@@ -66,13 +62,13 @@ function fmlogit(
     end
 
     # Pre-allocate gradient array
-    gradient = zeros(Float64, length(coefficients))
+    gradient = zeros(Float64, Base.length(coefficients))
     ForwardDiff.gradient!(gradient, loglik_fmlogit, vec(coefficients))  # In-place gradient computation
 
     loglik = -loglik_fmlogit(coefficients)
     loglik_0 = -loglik_fmlogit(zeros((k + 1) * (j - 1)))
     loglik_start = -loglik_fmlogit(start)
-    n_coefficients = length(coefficients)
+    n_coefficients = Base.length(coefficients)
 
     if !converged && !skip_optimization
         @warn "fmlogit did not converge! Not returning Hessian and Variance-Covariance Matrix"
