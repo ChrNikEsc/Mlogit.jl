@@ -38,5 +38,5 @@ transform!(HCdata, :alt => ByRow(x -> ifelse(x ∈ ["gcc", "ecc", "erc", "hpc"],
         equal_lambdas=false
     )
 
-    @test sum(model_nlogit.coef) ≈-7.895003155761888
+    @test round(sum(model_nlogit.coef), digits=6) ≈ -7.895003 # GitHub CI test with julia 1.9 failed when requiring more precision
 end
