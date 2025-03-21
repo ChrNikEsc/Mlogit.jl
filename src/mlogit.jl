@@ -174,6 +174,10 @@ function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights
     yx = zeros(Float64, Base.length(coef_start), n_chid)
     gradi = zeros(Float64, n_chid, Base.length(coef_start))
 
+    # further preallocation as suggested by deepseek
+    dxpx = zeros(Float64, Base.length(vec_chid), Base.length(coef_start))
+    dxpx_Pni = similar(dxpx)
+
     function fgh!(F, G, H, theta)
         # Common computations
         exb .= exp.(mat_X * theta)
@@ -183,13 +187,15 @@ function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights
             sexb[vec_chid[i]] += exb[i]
         end
 
-        @inbounds for i in eachindex(vec_chid)
-            # if neither gradient and Hessian is computed, only compute elements where alternative is chosen
-            if isnothing(G) && isnothing(H)
+        # restructuring loops and checks as suggested by deepseek; gives marginal time improvements
+        if isnothing(G) && isnothing(H)
+            @inbounds for i in eachindex(vec_chid)
                 if vec_choice[i]
                     Pni[i] = exb[i] / sexb[vec_chid[i]]
                 end
-            else
+            end
+        else
+            @inbounds for i in eachindex(vec_chid)
                 Pni[i] = exb[i] / sexb[vec_chid[i]]
             end
         end
@@ -210,14 +216,18 @@ function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights
         end
 
         if H !== nothing
-            dxpx = zeros(eltype(theta), Base.length(vec_chid), Base.length(coef_start))
+            # further preallocation as suggested by deepseek
+            dxpx .= zero(eltype(theta))
+            dxpx_Pni .= zero(eltype(theta))
+
+            # dxpx = zeros(eltype(theta), Base.length(vec_chid), Base.length(coef_start))
             @inbounds for i in eachindex(vec_chid), j in eachindex(theta)
                 dxpx[i, j] += mat_X[i, j] - Px[j, vec_chid[i]]
             end
 
-            dxpx_Pni = dxpx .* Pni
+            dxpx_Pni .= dxpx .* Pni
 
-            fill!(H, zero(eltype(theta)))
+            H .= zero(eltype(theta))
             @inbounds @simd for i in 1:n_chid
                 H .+= dxpx_Pni[idx_map[i], :]' * dxpx[idx_map[i], :] # hessian per chid, sum up
             end

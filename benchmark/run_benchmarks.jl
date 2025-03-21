@@ -4,6 +4,7 @@ Pkg.activate("benchmark/")
 using BenchmarkTools
 # using PProf
 using Mlogit  # Your package
+using Dates
 using CSV, DataFrames  # Example dependency for data handling
 
 const mlogit_datadir = joinpath(dirname(@__FILE__), "..", "data/")
@@ -21,17 +22,25 @@ transform!(df_mlogit, :id => (x -> ifelse.(x .> 30, "a", "b")) => :cluster)
 # Define benchmark
 formula = @formula(choice ~ pf + cl + loc + wk + tod + seas)
 
-suite = BenchmarkGroup()
-suite["mlogit"] = @benchmarkable mlogit($formula, $df_mlogit, weights=:weight)
+mlogit(formula, df_mlogit, weights=:weight)
+
+# suite = BenchmarkGroup()
+# suite["mlogit"] = @benchmarkable mlogit($formula, $df_mlogit, weights=:weight)
 
 # Run benchmarks
-results = run(suite, verbose=true)
+# results = run(suite, verbose=true)
 
-# Save results
-using JSON
-open("benchmark/results.json", "w") do f
-    JSON.print(f, results)
-end
+b = @benchmarkable mlogit($formula, $df_mlogit, weights=:weight) seconds=60
+
+results = run(b)
+BenchmarkTools.save("benchmark/results_fillH_"*string(Dates.now())*".json", median(results))
+
+
+# # Save results
+# using JSON
+# open("benchmark/results.json", "w") do f
+#     JSON.print(f, results)
+# end
 
 
 
