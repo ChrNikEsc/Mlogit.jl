@@ -3,6 +3,10 @@ Pkg.activate("benchmark/")
 
 using BenchmarkTools
 # using PProf
+using JET
+import Optim # to specify Optim.Options
+
+Pkg.develop(Pkg.PackageSpec(path = "../Mlogit"))
 using Mlogit  # Your package
 using Dates
 using CSV, DataFrames  # Example dependency for data handling
@@ -30,10 +34,10 @@ mlogit(formula, df_mlogit, weights=:weight)
 # Run benchmarks
 # results = run(suite, verbose=true)
 
-b = @benchmarkable mlogit($formula, $df_mlogit, weights=:weight) seconds=60
+b = @benchmarkable mlogit($formula, $df_mlogit, weights=:weight) seconds=30
 
 results = run(b)
-BenchmarkTools.save("benchmark/results_fillH_"*string(Dates.now())*".json", median(results))
+BenchmarkTools.save("benchmark/results_"*string(Dates.now())*".json", median(results))
 
 
 # # Save results
@@ -46,3 +50,7 @@ BenchmarkTools.save("benchmark/results_fillH_"*string(Dates.now())*".json", medi
 
 # Profile the mlogit function
 @profview mlogit(formula, df_mlogit, weights=:weight)
+
+reportopt = @report_opt mlogit(formula, df_mlogit, weights=:weight, optim_options=Optim.Options(iterations=1))
+
+println(reportopt)

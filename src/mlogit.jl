@@ -68,7 +68,7 @@ function StatsAPI.fit(::Type{MNLmodel},
 
     coef_names = nested ? vcat(coefnames_utility, coefnames_nests) : coefnames_utility
 
-    n_coefficients = Base.length(coef_names)
+    n_coefficients::Int64 = Base.length(coef_names)
 
     # Ids
     n_id = Base.length(unique(df[!, indices.id]))
@@ -93,13 +93,13 @@ function StatsAPI.fit(::Type{MNLmodel},
     else
         copy(start) # to prevent start from being mutated in place
     end
-    coef_start = convert.(Float64, coef_start)
+    coef_start::Vector{Float64} = convert.(Float64, coef_start)
 
     # Scaling
     # Standardizing the matrix column-wise
     mean_X = vec(mean(mat_X, dims=1))
-    std_X = vec(std(mat_X, dims=1))
-    extended_std_X = vcat(std_X, fill(1.0, Base.length(coef_start) - Base.length(std_X)))
+    std_X::Vector{Float64} = vec(std(mat_X, dims=1))
+    extended_std_X::Vector{Float64} = vcat(std_X, fill(1.0, Base.length(coef_start) - Base.length(std_X)))
     mat_X .= (mat_X .- mean_X') ./ std_X'
     coef_start .*= extended_std_X
 
@@ -114,16 +114,7 @@ function StatsAPI.fit(::Type{MNLmodel},
     estfun .= estfun .* extended_std_X'
     # revert standardization
     hessian .*= extended_std_X * extended_std_X'
-    vcov = fill(NaN, n_coefficients, n_coefficients)
-
-    # if any(isinf, hessian) || any(isnan, hessian)
-    #     # BHHH estimator
-    #     hessian .= gradi' * gradi
-    #     hessian_method = "BHHH"
-    # end
-
-    # if both fail, don't compute vcov
-        vcov = inv(hessian)
+    vcov = inv(hessian)
 
     r = MNLmodel(
         coef=coefficients,
@@ -178,7 +169,7 @@ function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights
     dxpx = zeros(Float64, Base.length(vec_chid), Base.length(coef_start))
     dxpx_Pni = similar(dxpx)
 
-    function fgh!(F, G, H, theta)
+    function fgh!(F, G, H, theta::Vector{Float64})
         # Common computations
         exb .= exp.(mat_X * theta)
 
@@ -254,8 +245,9 @@ function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights
     loglik_0 = -fgh!(1, nothing, nothing, zeros(n_coefficients))
     loglik_start = -f(coef_start)
     gradient = gr(coefficients_scaled)
-    estfun = gradi
-    hessian = fill(NaN, n_coefficients, n_coefficients)
+    estfun::Matrix{Float64} = gradi
+    # hessian = fill(NaN, n_coefficients, n_coefficients)
+    hessian::Matrix{Float64} = Matrix{Float64}(undef, n_coefficients, n_coefficients)
     fgh!(1, nothing, hessian, coefficients_scaled)
     fitted_values = Pni
 
@@ -401,7 +393,7 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
 
     converged = Optim.converged(opt)
     iter = Optim.iterations(opt)
-    coefficients_scaled = convert.(Float64, Optim.minimizer(opt))
+    coefficients_scaled::Vector{Float64} = convert.(Float64, Optim.minimizer(opt))
 
     function compute_fitted_values(theta)
         beta .= theta[1:n_coefficients_utility]
@@ -433,10 +425,10 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
     loglik_start = -f(coef_start)
 
     gradient = gr(coefficients_scaled)
-    estfun = gradi
+    estfun::Matrix{Float64} = gradi
     # hessian = ForwardDiff.jacobian(gr, coefficients_scaled)
     # TODO check whether ForwardDiff would have significant advantages. Overwriting things in fg! would likely not work then
-    hessian = FiniteDifferences.jacobian(central_fdm(3, 1), gr, coefficients_scaled)[1]
+    hessian::Matrix{Float64} = FiniteDifferences.jacobian(central_fdm(3, 1), gr, coefficients_scaled)[1]
     fitted_values = compute_fitted_values(coefficients_scaled)
     return opt, coefficients_scaled, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values, nests
 end

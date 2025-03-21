@@ -1,6 +1,7 @@
 [deps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Gtk4 = "9db2cae5-386f-4011-9d63-a5602296539b"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Mlogit = "ccfc7dc1-42c1-46a8-a22f-d184fa7e6d0f"
 PProf = "e4faabce-9ead-11e9-39d9-4379958e3056"
