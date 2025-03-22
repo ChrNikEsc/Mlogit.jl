@@ -37,7 +37,7 @@ mlogit(formula, df_mlogit, weights=:weight)
 b = @benchmarkable mlogit($formula, $df_mlogit, weights=:weight) seconds=30
 
 results = run(b)
-BenchmarkTools.save("benchmark/results_"*string(Dates.now())*".json", median(results))
+BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS")*".json", median(results))
 
 
 # # Save results
