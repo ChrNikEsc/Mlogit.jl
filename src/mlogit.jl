@@ -33,7 +33,7 @@ function StatsAPI.fit(::Type{MNLmodel},
     start_time = time()
 
     df = DataFrame(df; copycols=false)
-    nrows = size(df, 1)
+    nrows::Int64 = size(df, 1)
 
     # ---------------------------------------------------------------------------- #
     #                                 Parse formula                                #
@@ -49,8 +49,8 @@ function StatsAPI.fit(::Type{MNLmodel},
     s = schema(formula, df)
 
     formula_schema = apply_schema(formula, s)
-    vec_choice = convert(BitVector, response(formula_schema, df))
-    mat_X = convert(Matrix{Float64}, modelmatrix(formula_schema, df))
+    vec_choice::BitVector = convert(BitVector, response(formula_schema, df))
+    mat_X::Matrix{Float64} = convert(Matrix{Float64}, modelmatrix(formula_schema, df))
 
     response_name, coefnames_utility = coefnames(formula_schema)
 
@@ -66,38 +66,47 @@ function StatsAPI.fit(::Type{MNLmodel},
         ["lambda_$k" for k in filter(x -> !ismissing(x) && !isnothing(x) && x != 0, unique(vec_nests))]
     end
 
-    coef_names = nested ? vcat(coefnames_utility, coefnames_nests) : coefnames_utility
+    coef_names::Vector{String} = nested ? vcat(coefnames_utility, coefnames_nests) : coefnames_utility
 
     n_coefficients::Int64 = Base.length(coef_names)
+    n_coefficients_util::Int64 = Base.length(coefnames_utility)
 
     # Ids
-    n_id = Base.length(unique(df[!, indices.id]))
+    n_id::Int64 = Base.length(unique(df[!, indices.id]))
 
     # Chids
-    vec_chid = convert.(Int64, df[!, indices.chid])
+    vec_chid::Vector{Int64} = convert.(Int64, df[!, indices.chid])
     # make sure that vec_chid can be used to index vectors of length length(unique(vec_chid))
     remap_to_indices_chid!(vec_chid)
-    n_chid = Base.length(unique(vec_chid))
+    n_chid::Int64 = Base.length(unique(vec_chid))
 
     # Weights
-    if isnothing(weights)
-        vec_weights = ones(Float64, Base.length(vec_choice))
-    else
-        vec_weights = convert.(Float64, ((df[!, weights] ./ sum(df[!, weights])) .* nrows))
+    # vec_weights::Vector{Float64} = if isnothing(weights)
+    #     ones(Float64, Base.length(vec_choice))
+    # else
+    #     w = [Float64(x) for x in df[!, weights]]
+    #     (w ./ sum(w)) .* nrows
+    # end
+    vec_weights::Vector{Float64} = isnothing(weights) ? 
+    ones(Float64, length(vec_choice)) : 
+    let w::Vector{Float64} = df[!, weights] # ensures type stability
+        (w ./ sum(w)) .* nrows
     end
+
     vec_weights_choice = vec_weights[vec_choice]
 
     # Start values
-    coef_start = if isnothing(start)
-        [zeros(Base.length(coefnames_utility)); ones(nested * (equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests))))]
+    coef_start::Vector{Float64} = if isnothing(start)
+        [zeros(Float64, n_coefficients_util); ones(Float64, nested * (equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests))))]
     else
-        copy(start) # to prevent start from being mutated in place
+        # copy(start) # to prevent start from being mutated in place
+        start::Vector{Float64}
     end
-    coef_start::Vector{Float64} = convert.(Float64, coef_start)
+    # coef_start = convert.(Float64, coef_start)
 
     # Scaling
     # Standardizing the matrix column-wise
-    mean_X = vec(mean(mat_X, dims=1))
+    mean_X::Vector{Float64} = vec(mean(mat_X, dims=1))
     std_X::Vector{Float64} = vec(std(mat_X, dims=1))
     extended_std_X::Vector{Float64} = vcat(std_X, fill(1.0, Base.length(coef_start) - Base.length(std_X)))
     mat_X .= (mat_X .- mean_X') ./ std_X'
