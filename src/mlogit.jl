@@ -33,7 +33,7 @@ function StatsAPI.fit(::Type{MNLmodel},
     start_time = time()
 
     df = DataFrame(df; copycols=false)
-    nrows = size(df, 1)
+    nrows::Int64 = size(df, 1)
 
     # ---------------------------------------------------------------------------- #
     #                                 Parse formula                                #
@@ -49,14 +49,17 @@ function StatsAPI.fit(::Type{MNLmodel},
     s = schema(formula, df)
 
     formula_schema = apply_schema(formula, s)
-    vec_choice = convert(BitVector, response(formula_schema, df))
-    mat_X = convert(Matrix{Float64}, modelmatrix(formula_schema, df))
+    vec_choice::BitVector, mat_X::Matrix{Float64} = StatsModels.modelcols(formula_schema, df)
 
-    response_name, coefnames_utility = coefnames(formula_schema)
+    response_name::String, coefnames_utility::Vector{String} = coefnames(formula_schema)
 
     nested = formula_nests != FormulaTerm(ConstantTerm(0), ConstantTerm(0))
-    vec_nests = nested ? df[:, nestssymbol(formula_nests.rhs[1])] : zeros(Int64, nrows)
-    coefnames_nests = if !nested
+
+    # vec_nests = nested ? df[:, nestssymbol(formula_nests.rhs[1])] : zeros(Int64, nrows)
+    vec_nests::Vector{String} = nested ? df[:, nestssymbol(only(formula_nests.rhs))] : repeat(["x"], inner=nrows)
+
+
+    coefnames_nests::Vector{String} = if !nested
         []
     elseif equal_lambdas
         ["lambda"]
@@ -66,47 +69,61 @@ function StatsAPI.fit(::Type{MNLmodel},
         ["lambda_$k" for k in filter(x -> !ismissing(x) && !isnothing(x) && x != 0, unique(vec_nests))]
     end
 
-    coef_names = nested ? vcat(coefnames_utility, coefnames_nests) : coefnames_utility
+    coef_names::Vector{String} = nested ? vcat(coefnames_utility, coefnames_nests) : coefnames_utility
 
     n_coefficients::Int64 = Base.length(coef_names)
+    n_coefficients_util::Int64 = Base.length(coefnames_utility)
 
     # Ids
-    n_id = Base.length(unique(df[!, indices.id]))
+    # n_id::Int64 = Base.length(unique(df[!, indices.id])) # Despite some runtime-dispatch, this has the fewest allocations
+    # TODO The following minimizes runtime-dispatch but has more allocations. Change back after JET.jl analysis
+    n_id::Int64 = let v::Vector{Int64} = df[!, indices.id]
+        Base.length(unique(v))
+    end
+
 
     # Chids
-    vec_chid = convert.(Int64, df[!, indices.chid])
+    vec_chid::Vector{Int64} = df[!, indices.chid]
     # make sure that vec_chid can be used to index vectors of length length(unique(vec_chid))
     remap_to_indices_chid!(vec_chid)
-    n_chid = Base.length(unique(vec_chid))
+    n_chid::Int64 = Base.length(unique(vec_chid))
 
     # Weights
-    if isnothing(weights)
-        vec_weights = ones(Float64, Base.length(vec_choice))
-    else
-        vec_weights = convert.(Float64, ((df[!, weights] ./ sum(df[!, weights])) .* nrows))
-    end
+    # vec_weights::Vector{Float64} = if isnothing(weights)
+    #     ones(Float64, Base.length(vec_choice))
+    # else
+    #     w = [Float64(x) for x in df[!, weights]]
+    #     (w ./ sum(w)) .* nrows
+    # end
+    vec_weights::Vector{Float64} = isnothing(weights) ?
+                                   ones(Float64, Base.length(vec_choice)) :
+                                   let w::Vector{Float64} = df[!, weights] # ensures type stability
+                                        (w ./ sum(w)) .* nrows
+                                    end
+
     vec_weights_choice = vec_weights[vec_choice]
 
     # Start values
-    coef_start = if isnothing(start)
-        [zeros(Base.length(coefnames_utility)); ones(nested * (equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests))))]
+    coef_start::Vector{Float64} = if isnothing(start)
+        [zeros(Float64, n_coefficients_util); ones(Float64, nested * (equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests))))]
     else
-        copy(start) # to prevent start from being mutated in place
+        # copy(start) # to prevent start from being mutated in place
+        start::Vector{Float64}
     end
-    coef_start::Vector{Float64} = convert.(Float64, coef_start)
+    # coef_start = convert.(Float64, coef_start)
 
     # Scaling
     # Standardizing the matrix column-wise
-    mean_X = vec(mean(mat_X, dims=1))
+    mean_X::Vector{Float64} = vec(mean(mat_X, dims=1))
     std_X::Vector{Float64} = vec(std(mat_X, dims=1))
     extended_std_X::Vector{Float64} = vcat(std_X, fill(1.0, Base.length(coef_start) - Base.length(std_X)))
     mat_X .= (mat_X .- mean_X') ./ std_X'
     coef_start .*= extended_std_X
 
     if !nested
-        opt, coefficients_scaled, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; optim_options=optim_options)
+        opt, coefficients_scaled, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; optim_options=optim_options)
     else
-        opt, coefficients_scaled, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values, nests = fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice, vec_nests, equal_lambdas; optim_options=optim_options)
+        opt, coefficients_scaled, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values, nests = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice, vec_nests, equal_lambdas; optim_options=optim_options)
     end
 
     # revert standardization
@@ -151,23 +168,24 @@ function StatsAPI.fit(::Type{MNLmodel},
     return r
 end
 
-function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; method=Newton(), optim_options=Optim.Options())
+# No nests
+function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::Vector{Float64}, vec_chid::Vector{Int64}, vec_weights_choice::Vector{Float64}; method=Newton(), optim_options=Optim.Options())
 
-    n_chid = Base.length(unique(vec_chid))
+    n_chid::Int64 = Base.length(unique(vec_chid))
     idx_map = create_index_map(vec_chid)
-    n_coefficients = Base.length(coef_start)
+    n_coefficients::Int64 = Base.length(coef_start)
 
     # Initialize objects in fgh!
-    exb = exp.(mat_X * coef_start)
-    sexb = zeros(Float64, n_chid)
-    Pni = zeros(Float64, Base.length(vec_chid))
-    Px = zeros(Float64, Base.length(coef_start), n_chid)
-    yx = zeros(Float64, Base.length(coef_start), n_chid)
-    gradi = zeros(Float64, n_chid, Base.length(coef_start))
+    exb::Vector{Float64} = exp.(mat_X * coef_start)
+    sexb::Vector{Float64} = zeros(Float64, n_chid)
+    Pni::Vector{Float64} = zeros(Float64, Base.length(vec_chid))
+    Px::Matrix{Float64} = zeros(Float64, Base.length(coef_start), n_chid)
+    yx::Matrix{Float64} = zeros(Float64, Base.length(coef_start), n_chid)
+    gradi::Matrix{Float64} = zeros(Float64, n_chid, Base.length(coef_start))
 
     # further preallocation as suggested by deepseek
-    dxpx = zeros(Float64, Base.length(vec_chid), Base.length(coef_start))
-    dxpx_Pni = similar(dxpx)
+    dxpx::Matrix{Float64} = zeros(Float64, Base.length(vec_chid), Base.length(coef_start))
+    dxpx_Pni::Matrix{Float64} = similar(dxpx)
 
     function fgh!(F, G, H, theta::Vector{Float64})
         # Common computations
@@ -236,25 +254,25 @@ function fit_mlogit_nonests(mat_X, vec_choice, coef_start, vec_chid, vec_weights
         return GG
     end
 
-    opt = Optim.optimize(Optim.only_fgh!(fgh!), coef_start, method, optim_options)
+    opt = Optim.optimize(Optim.only_fgh!(fgh!), coef_start::Vector{Float64}, method, optim_options)
 
     coefficients_scaled::Vector{Float64} = Optim.minimizer(opt)
-    converged = Optim.converged(opt)
-    iter = Optim.iterations(opt)
-    loglik = -f(coefficients_scaled)
-    loglik_0 = -fgh!(1, nothing, nothing, zeros(n_coefficients))
-    loglik_start = -f(coef_start)
-    gradient = gr(coefficients_scaled)
+    converged::Bool = Optim.converged(opt)
+    iter::Int64 = Optim.iterations(opt)
+    loglik::Float64 = -f(coefficients_scaled)
+    loglik_0::Float64 = -fgh!(1, nothing, nothing, zeros(n_coefficients))
+    loglik_start::Float64 = -f(coef_start)
+    gradient::Vector{Float64} = gr(coefficients_scaled)
     estfun::Matrix{Float64} = gradi
-    # hessian = fill(NaN, n_coefficients, n_coefficients)
     hessian::Matrix{Float64} = Matrix{Float64}(undef, n_coefficients, n_coefficients)
     fgh!(1, nothing, hessian, coefficients_scaled)
-    fitted_values = Pni
+    fitted_values::Vector{Float64} = Pni
 
     return opt, coefficients_scaled, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values
 end
 
-function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}, vec_weights_choice, vec_nests, equal_lambdas; method=LBFGS(linesearch=LineSearches.BackTracking()), optim_options=Optim.Options())
+# With nests
+function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::Vector{Float64}, vec_chid::Vector{Int64}, vec_weights_choice, vec_nests, equal_lambdas; method=LBFGS(linesearch=LineSearches.BackTracking()), optim_options=Optim.Options())
 
     # Nests
     # transform vec_nest such that 0 means an alternative is in its own nest (don't estimate lambda)..
@@ -272,7 +290,7 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
     mat_X_choice = mat_X[vec_choice, :]
 
     # Initialize objects in fg!
-    beta = coef_start[1:n_coefficients_utility]
+    beta::Vector{Float64} = coef_start[1:n_coefficients_utility]
     lambda = ones(n_nests + 1)
     V = mat_X * beta
     sum_chid_nest = zeros(n_chid, n_nests + 1)
@@ -280,7 +298,7 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
     gradi = zeros(Float64, n_chid, n_coefficients_utility + !equal_lambdas * n_nests + equal_lambdas)
     gradi_lambda = zeros(Float64, n_chid, n_nests)
 
-    function fg!(F, G, theta)
+    function fg!(F, G, theta::Vector{Float64})
         beta = theta[1:n_coefficients_utility]
         if equal_lambdas
             lambda[2:end] .= theta[end]
@@ -389,13 +407,13 @@ function fit_mlogit_nests(mat_X, vec_choice, coef_start, vec_chid::Vector{Int64}
         return GG
     end
 
-    opt = Optim.optimize(Optim.only_fg!(fg!), coef_start, method, optim_options)
+    opt = Optim.optimize(Optim.only_fg!(fg!), coef_start::Vector{Float64}, method, optim_options)
 
     converged = Optim.converged(opt)
     iter = Optim.iterations(opt)
     coefficients_scaled::Vector{Float64} = convert.(Float64, Optim.minimizer(opt))
 
-    function compute_fitted_values(theta)
+    function compute_fitted_values(theta::Vector{Float64})::Vector{Float64}
         beta .= theta[1:n_coefficients_utility]
 
         if equal_lambdas

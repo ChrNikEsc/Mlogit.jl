@@ -287,7 +287,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         llincrease = 9999.9
 
         while iter <= max_iter
-            call_mlogit_coef(s) = fit_mlogit_nonests(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, df[:, "lcl_H$s"][vec_choice])
+            call_mlogit_coef(s) = fit_mlogit(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, df[:, "lcl_H$s"][vec_choice])
             # Update the probability of the agent's sequence of choices
             if multithreading
                 Threads.@threads for s in 1:n_classes
