@@ -1,3 +1,6 @@
+import Pkg
+Pkg.activate("test/")
+Pkg.develop(Pkg.PackageSpec(path = "../Mlogit"))
 using Mlogit
 using Test
 
