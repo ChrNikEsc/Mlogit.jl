@@ -248,57 +248,57 @@ function RegressionTables.default_regression_statistics(render::AbstractRenderTy
     [Nobs, R2McFadden, AdjR2McFadden, LogLikelihood, AIC, BIC]
 end
 
-function coefplot(model::LCLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing)
-    model_data = lclmodel_data(model, level=level)
+# function coefplot(model::LCLmodel; level::Real=0.95)
+#     model_data = lclmodel_data(model, level=level)
 
 
-    # coefficient plot
-    fontsize_theme = Theme(fontsize=30)
-    set_theme!(fontsize_theme)
-    size = (1600, 600)
+#     # coefficient plot
+#     fontsize_theme = Theme(fontsize=30)
+#     set_theme!(fontsize_theme)
+#     size = (1600, 600)
 
-    row = model_data.row
-    coef = model_data.coef
-    coefname = model_data.coefname
-    coefname_index = model_data.coefname_index
+#     row = model_data.row
+#     coef = model_data.coef
+#     coefname = model_data.coefname
+#     coefname_index = model_data.coefname_index
 
-    ci = confint(model, level=level)
-    ci_lo = model_data.ci_lo
-    ci_hi = model_data.ci_hi
-    significant = vec(sum(sign.(ci), dims=2) .!= 0)
-    marker = ifelse.(significant, :circle, :vline)
+#     ci = confint(model, level=level)
+#     ci_lo = model_data.ci_lo
+#     ci_hi = model_data.ci_hi
+#     significant = vec(sum(sign.(ci), dims=2) .!= 0)
+#     marker = ifelse.(significant, :circle, :vline)
 
-    colorscheme = get(ColorSchemes.Dark2_8, range(0.0, 1.0, length=maximum(coefname_index)))
-    transform!(model_data, :coefname_index => ByRow(i -> colorscheme[i]) => :coefname_color)
+#     colorscheme = get(ColorSchemes.Dark2_8, range(0.0, 1.0, length=maximum(coefname_index)))
+#     transform!(model_data, :coefname_index => ByRow(i -> colorscheme[i]) => :coefname_color)
 
-    # Create the plot
-    fig_coefs = Figure(size=size)
-    ax = Axis(fig_coefs[1, 1], xlabel="Coefficient", ylabel="Variable", yreversed=true)
-    # Red line at x=0
-    vlines!(ax, [0], color=:black, linewidth=3)
-    # Add horizontal lines for confidence intervals
-    for i in 1:length(coef)
-        linesegments!(ax, [(ci_lo[i], i), (ci_hi[i], i)],
-            color=:black, label=i == 1 ? "Confidence Interval" : nothing)
-    end
+#     # Create the plot
+#     fig_coefs = Figure(size=size)
+#     ax = Axis(fig_coefs[1, 1], xlabel="Coefficient", ylabel="Variable", yreversed=true)
+#     # Red line at x=0
+#     vlines!(ax, [0], color=:black, linewidth=3)
+#     # Add horizontal lines for confidence intervals
+#     for i in 1:length(coef)
+#         linesegments!(ax, [(ci_lo[i], i), (ci_hi[i], i)],
+#             color=:black, label=i == 1 ? "Confidence Interval" : nothing)
+#     end
 
-    # connect points of a coefname
-    for cn in unique(coefname)
-        data_subset = subset(model_data, :coefname => x -> x .== cn)
-        lines!(ax, data_subset.coef, data_subset.row, color=data_subset.coefname_color)
-    end
+#     # connect points of a coefname
+#     for cn in unique(coefname)
+#         data_subset = subset(model_data, :coefname => x -> x .== cn)
+#         lines!(ax, data_subset.coef, data_subset.row, color=data_subset.coefname_color)
+#     end
 
-    # Scatter plot for coefficients
-    scatter!(ax, coef, row, marker=marker, color=model_data.coefname_color, label="Coefficient", markersize=20)
-    # scatter!(ax, coefs, 1:length(coefs), label="Coefficient", markersize=20)
-    # Customizing the y-axis to show variable names
-    ax.yticks = (1:length(coef), coefnames(model))
-    # Add a legend
-    # axislegend(ax)
-    fig_coefs[1, 2] = Legend(fig_coefs, ax, framevisible=false)
-    # Show the plot
-    return fig_coefs
-end
+#     # Scatter plot for coefficients
+#     scatter!(ax, coef, row, marker=marker, color=model_data.coefname_color, label="Coefficient", markersize=20)
+#     # scatter!(ax, coefs, 1:length(coefs), label="Coefficient", markersize=20)
+#     # Customizing the y-axis to show variable names
+#     ax.yticks = (1:length(coef), coefnames(model))
+#     # Add a legend
+#     # axislegend(ax)
+#     fig_coefs[1, 2] = Legend(fig_coefs, ax, framevisible=false)
+#     # Show the plot
+#     return fig_coefs
+# end
 
 function lclmodel_data(model::LCLmodel; level=0.95)
     ci = confint(model, level=level)

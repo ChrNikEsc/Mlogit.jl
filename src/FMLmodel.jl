@@ -266,7 +266,7 @@ function vcovCL(model::FMLmodel, cluster; type="HC1")
 end
 
 # Helper function to obtain the data frame that is required for the "cluster" argument in meatCL
-get_cluster_df(varnames_cluster...; df=df, varname_chid=:chid) = string.(select(unique(df, varname_chid), varnames_cluster...))
+# get_cluster_df(varnames_cluster...; df=df, varname_chid=:chid) = string.(select(unique(df, varname_chid), varnames_cluster...))
 
 # model_mlogit_vcov.nclusters = (; cluster=length(unique(get_cluster_df(:cluster, df=df))))
 function robust_cluster_vcov(model::FMLmodel, type, df, varnames_cluster...)
