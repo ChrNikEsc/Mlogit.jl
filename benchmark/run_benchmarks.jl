@@ -40,14 +40,14 @@ mlogit(formula, df_mlogit, weights=:weight)
 # display(median_results)
 # BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median_results.allocs) * ".json", median(results))
 
-mat_X, vec_choice, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema = Mlogit.prepare_mlogit_inputs(formula, df_mlogit, Mlogit.xlogit_indices(), :weight, nothing, false)
+# mat_X, vec_choice, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema = Mlogit.prepare_mlogit_inputs(formula, df_mlogit, Mlogit.xlogit_indices(), :weight, nothing, false)
 
-b_fit_mlogit = @benchmarkable Mlogit.fit_mlogit($mat_X, $vec_choice, $coef_start, $vec_chid, $vec_weights_choice; optim_options=Optim.Options()) seconds = 30
-results_fit_mlogit = run(b_fit_mlogit)
-BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_fit_mlogit).allocs) * ".json", median(results_fit_mlogit))
+# b_fit_mlogit = @benchmarkable Mlogit.fit_mlogit($mat_X, $vec_choice, $coef_start, $vec_chid, $vec_weights_choice; optim_options=Optim.Options()) seconds = 30
+# results_fit_mlogit = run(b_fit_mlogit)
+# BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_fit_mlogit).allocs) * ".json", median(results_fit_mlogit))
 
-reportopt_fit_mlogit = @report_opt Mlogit.fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; optim_options=Optim.Options())
-print(reportopt_fit_mlogit)
+# reportopt_fit_mlogit = @report_opt Mlogit.fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; optim_options=Optim.Options())
+# print(reportopt_fit_mlogit)
 
 # Profile the mlogit function
 # @profview mlogit(formula, df_mlogit, weights=:weight)
@@ -55,3 +55,19 @@ print(reportopt_fit_mlogit)
 # reportopt = @report_opt mlogit(formula, df_mlogit, weights=:weight, optim_options=Optim.Options(iterations=1))
 
 # println(reportopt)
+
+
+
+
+
+# fmlogit
+
+
+df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
+
+b_fmlogit = @benchmarkable Mlogit.fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), $df_fmlogit, multithreading=false) seconds = 30
+results_fmlogit = run(b_fmlogit)
+BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_fmlogit).allocs) * ".json", median(results_fmlogit))
+
+reportopt_fmlogit = @report_opt Mlogit.fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=false)
+println(reportopt_fmlogit)

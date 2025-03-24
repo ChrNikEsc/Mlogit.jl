@@ -91,13 +91,17 @@ function prepare_data_fmlogit(formula, df)
     s = schema(formula, df)
 
     formula_schema = apply_schema(formula, s)
-    y = convert(Matrix{Float64}, hcat(response(formula_schema, df)...))
-    X = convert(Matrix{Float64}, modelmatrix(formula_schema, df))
-    varnames_y, varnames_X = coefnames(formula_schema)
+    y::Matrix{Float64}, X::Matrix{Float64} = let model_cols = modelcols(formula_schema, df)
+        (reduce(hcat, model_cols[1]), model_cols[2])
+    end
+    varnames_y::Vector{String}, varnames_X::Vector{String} = let cn = coefnames(formula_schema)
+        (cn[1] isa AbstractVector ? cn[1] : [cn[1]]),
+        (cn[2] isa AbstractVector ? cn[2] : [cn[2]])
+    end
     n::Int64 = nrow(df)
     j::Int64 = size(y, 2)
     k::Int64 = size(X, 2)
-    X = [X ones(n)]
+    X = [X ones(Float64, n)]
     (sum(isapprox.(sum(y, dims=2), 1)) == n) || error("Not all rows of y sum to 1")
 
     return formula_schema, y, X, varnames_y, varnames_X, n, j, k
