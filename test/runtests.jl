@@ -51,7 +51,10 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
 
     # lclogit
     model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 4, method=:em)
+    @test round(sum(model_lclogit_em.coef_memb), digits=5) ≈ -1.06644
+    
     model_lclogit_grad = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 4, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient)
+    @test round(sum(model_lclogit_grad.coef_memb), digits=5) ≈ -1.06492
 end
 
 
