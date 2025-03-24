@@ -15,7 +15,7 @@ function fmlogit(
 
     formula_schema, y::Matrix{Float64}, X::Matrix{Float64}, varnames_y::Vector{String}, varnames_X::Vector{String}, n::Int64, j::Int64, k::Int64 = prepare_data_fmlogit(formula, df)
 
-    start = isnothing(start) ? zeros(Float64, (k + 1), (j - 1)) : start[:, 1:(j-1)]
+    start::Matrix{Float64} = isnothing(start) ? zeros(Float64, (k + 1), (j - 1)) : start[:, 1:(j-1)]
 
     # Weights
     vec_weights::Vector{Float64} = isnothing(weights) ?
