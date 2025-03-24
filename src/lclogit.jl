@@ -102,7 +102,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     vec_id = df.id
 
     # Chids
-    vec_chid = df[!, indices.chid]
+    vec_chid::Vector{Int64} = df[!, indices.chid]
     # make sure that vec_chid can be used to index vectors of length length(unique(vec_chid))
     # unique(vec_chid) != 1:length(unique(vec_chid)) && 
     remap_to_indices_chid!(vec_chid)
