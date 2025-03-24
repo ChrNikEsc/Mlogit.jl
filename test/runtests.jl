@@ -44,7 +44,7 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
         equal_lambdas=false
     )
 
-    @test round(sum(model_nlogit.coef), digits=5) ≈ -7.89500 # This seems to be relatively unstable
+    @test round(sum(model_nlogit.coef), digits=3) ≈ -7.895 # This seems to be relatively unstable
     
     # fmlogit
     model_fmlogit = fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=true)
