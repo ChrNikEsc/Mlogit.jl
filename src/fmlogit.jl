@@ -13,16 +13,16 @@ function fmlogit(
     # Start time
     start_time = time()
 
-    formula_schema, y, X, varnames_y, varnames_X, n, j, k = prepare_data_fmlogit(formula, df)
+    formula_schema, y::Matrix{Float64}, X::Matrix{Float64}, varnames_y::Vector{String}, varnames_X::Vector{String}, n::Int64, j::Int64, k::Int64 = prepare_data_fmlogit(formula, df)
 
     start = isnothing(start) ? zeros(Float64, (k + 1), (j - 1)) : start[:, 1:(j-1)]
 
     # Weights
-    if isnothing(weights)
-        vec_weights = ones(Float64, n)
-    else
-        vec_weights = convert.(Float64, ((df[!, weights] ./ sum(df[!, weights])) .* n))
-    end
+    vec_weights::Vector{Float64} = isnothing(weights) ?
+                                   ones(Float64, n) :
+                                   let w::Vector{Float64} = df[!, weights]
+                                        (w ./ sum(w)) .* n
+                                    end
 
     function loglik_fmlogit(betas)
         betamat = [transpose(reshape(betas, k + 1, j - 1)); zeros(k + 1)']
@@ -49,26 +49,37 @@ function fmlogit(
         return -sum(L)
     end
 
-    if skip_optimization
-        coefficients = start
-        converged = false
-        iter = -1
-    else
+    if !skip_optimization
         opt = Optim.optimize(loglik_fmlogit, vec(start), method, optim_options, autodiff=:forward)
-
-        converged = Optim.converged(opt)
-        iter = Optim.iterations(opt)
-        coefficients = reshape(Optim.minimizer(opt), (k + 1), (j - 1))
     end
+
+    coefficients::Matrix{Float64} = if skip_optimization
+        start
+    else
+        reshape(Optim.minimizer(opt), (k + 1), (j - 1))
+    end
+    
+    converged::Bool = if skip_optimization
+        false
+    else
+        Optim.converged(opt)
+    end
+    
+    iter::Int64 = if skip_optimization
+        -1
+    else
+        Optim.iterations(opt)
+    end
+
 
     # Pre-allocate gradient array
     gradient = zeros(Float64, Base.length(coefficients))
     ForwardDiff.gradient!(gradient, loglik_fmlogit, vec(coefficients))  # In-place gradient computation
 
-    loglik = -loglik_fmlogit(coefficients)
-    loglik_0 = -loglik_fmlogit(zeros((k + 1) * (j - 1)))
-    loglik_start = -loglik_fmlogit(start)
-    n_coefficients = Base.length(coefficients)
+    loglik::Float64 = -loglik_fmlogit(coefficients)
+    loglik_0::Float64 = -loglik_fmlogit(zeros((k + 1) * (j - 1)))
+    loglik_start::Float64 = -loglik_fmlogit(start)
+    n_coefficients::Int64 = Base.length(coefficients)
 
     if !converged && !skip_optimization
         @warn "fmlogit did not converge! Not returning Hessian and Variance-Covariance Matrix"
