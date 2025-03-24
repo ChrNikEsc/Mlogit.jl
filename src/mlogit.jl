@@ -131,6 +131,8 @@ end
 # No nests
 function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::Vector{Float64}, vec_chid::Vector{Int64}, vec_weights_choice::Vector{Float64}; method=Newton(), optim_options=Optim.Options())
 
+    tmp_mul = similar(vec_chid, Float64, size(mat_X, 1))
+
     n_chid::Int64 = Base.length(unique(vec_chid))
     idx_map = create_index_map(vec_chid)
     n_coefficients::Int64 = Base.length(coef_start)
@@ -149,7 +151,9 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
 
     function fgh!(F, G, H, theta::Vector{Float64})
         # Common computations
-        exb .= exp.(mat_X * theta)
+        # exb .= exp.(mat_X * theta)
+        mul!(tmp_mul, mat_X, theta)  # in-place multiplication
+        exb .= exp.(tmp_mul)
 
         fill!(sexb, zero(eltype(theta)))
         @inbounds for i in eachindex(vec_chid)
@@ -203,7 +207,7 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
         end
 
         if F !== nothing
-            return -sum(vec_weights_choice .* log.(Pni[vec_choice])) # TODO used to be Pni[indices_choice], was this important?
+            return -sum(vec_weights_choice .* log.(Pni[vec_choice]))
         end
     end
 

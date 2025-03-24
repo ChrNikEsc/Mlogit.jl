@@ -9,7 +9,7 @@ using StatsBase, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Distri
 using Optim, Distributions, LineSearches
 using ForwardDiff
 using FiniteDifferences
-using LinearAlgebra: diag, dot
+using LinearAlgebra: diag, dot, mul!
 # using NamedArrays # used to be in fmlogit.jl but might no longer be necessary
 # using Random # used to be in fmlogit.jl but might no longer be necessary
 # using CategoricalArrays # used to be in lclogit.jl but might no longer be necessary
