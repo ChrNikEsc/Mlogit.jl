@@ -52,6 +52,6 @@ BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-H
 # Profile the mlogit function
 # @profview mlogit(formula, df_mlogit, weights=:weight)
 
-reportopt = @report_opt mlogit(formula, df_mlogit, weights=:weight, optim_options=Optim.Options(iterations=1))
+# reportopt = @report_opt mlogit(formula, df_mlogit, weights=:weight, optim_options=Optim.Options(iterations=1))
 
-println(reportopt)
+# println(reportopt)

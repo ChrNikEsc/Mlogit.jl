@@ -1,6 +1,5 @@
 mutable struct MNLmodel <: RegressionModel
     coef::Vector{Float64}
-    coef_scaled::Vector{Float64}
     coefnames::Vector{String}
     converged::Union{Bool,Nothing}
     depvar::BitVector
@@ -32,7 +31,6 @@ end
 
 function MNLmodel(;
     coef::Vector{Float64},
-    coef_scaled::Vector{Float64},
     coefnames::Vector{String},
     converged::Bool,
     depvar::BitVector,
@@ -60,7 +58,7 @@ function MNLmodel(;
     time::Float64,
     vcov::Matrix{Float64},
     vcov_type::Vcov.CovarianceEstimator)
-    return MNLmodel(coef, coef_scaled, coefnames, converged, depvar, df_hash, dof, estfun, fitted, formula, formula_origin, formula_schema, hessian, indices, iter, loglikelihood, mixed, nchids, nclusters, nests, nids, nullloglikelihood, optim, score, start, startloglikelihood, time, vcov, vcov_type)
+    return MNLmodel(coef, coefnames, converged, depvar, df_hash, dof, estfun, fitted, formula, formula_origin, formula_schema, hessian, indices, iter, loglikelihood, mixed, nchids, nclusters, nests, nids, nullloglikelihood, optim, score, start, startloglikelihood, time, vcov, vcov_type)
 end
 
 function StatsAPI.adjr2(model::MNLmodel, variant::Symbol)
