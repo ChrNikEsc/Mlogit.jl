@@ -142,44 +142,49 @@ function StatsAPI.fit(::Type{LCLmodel},
     formula_schema = apply_schema(formula, s)
     formula_schema_memb = apply_schema(formula_membership, s_memb)
     vec_choice::BitVector, mat_X::Matrix{Float64} = modelcols(formula_schema, df)
-    mat_memb = convert(Matrix{Float64}, modelmatrix(formula_schema_memb, df))
+    mat_memb::Matrix{Float64} = convert(Matrix{Float64}, modelmatrix(formula_schema_memb, df))
     mat_memb = hcat(mat_memb, ones(Float64, nrows)) # add constant column. maybe this should be incorporated in formula but fmlogit would not expect that (always assumes constant)
 
 
-    response_name, coefnames_utility = StatsModels.coefnames(formula_schema)
+    response_name::String, coefnames_utility::Vector{String} = StatsModels.coefnames(formula_schema)
     _, coefnames_membership = StatsModels.coefnames(formula_schema_memb)
     coefnames_membership = [coefnames_membership;] # to ensure that it is a vector even if it has only one element
-    k_membership = Base.length(coefnames_membership)
-    k_utility = Base.length(coefnames_utility)
+    k_membership::Int64 = Base.length(coefnames_membership)
+    k_utility::Int64 = Base.length(coefnames_utility)
+
+    vec_id::Vector{Int64} = Vector{Int64}(df.id)
+    n_id::Int64 = Base.length(unique(vec_id))
 
     # add first_by_id for first entry by id
     transform!(groupby(df, :id), eachindex => :lcl_first_by_id)
     transform!(df, :lcl_first_by_id => (x -> ifelse.(x .== 1, 1, 0)) => :lcl_first_by_id) # can't this be done in one line??
 
-    transform!(df, :choice => (x -> convert.(Bool, x)), renamecols=false)
+    # for changing to array-based code
+    lcl_first_by_id = let seen = Set()
+        [id in seen ? 0 : (push!(seen, id); 1) for id in vec_id]
+    end
 
-    vec_id = df.id
-    n_id = Base.length(unique(df.id))
+    transform!(df, :choice => (x -> convert.(Bool, x)), renamecols=false)
 
     # Chids
     vec_chid::Vector{Int64} = df[!, indices.chid]
     # make sure that vec_chid can be used to index vectors of length length(unique(vec_chid))
     # unique(vec_chid) != 1:length(unique(vec_chid)) && 
     remap_to_indices_chid!(vec_chid)
-    idx_map = create_index_map(vec_chid)
-    n_chid = Base.length(unique(vec_chid))
+    # idx_map = create_index_map(vec_chid)
+    n_chid::Int64 = Base.length(unique(vec_chid))
 
     probs_memb = Matrix{Float64}(undef, nrow(df), n_classes)
 
     # Start values
     # TODO seems to ignore start values when using method=:em
-    coefs_mlogit = if isnothing(start_mnl)
+    coefs_mlogit::Matrix{Float64} = if isnothing(start_mnl)
         zeros(Float64, k_utility, n_classes) # one column represents the coefs of a class's MNL model
     else
         copy(start_mnl) # to prevent start from being mutated in place
     end
-    coefs_memb = if isnothing(start_memb)
-        zeros(Float64, (k_membership + 1), (n_classes - 1))
+    coefs_memb::Matrix{Float64} = if isnothing(start_memb)
+        zeros(Float64, k_membership + 1, n_classes - 1)
     else
         copy(start_memb) # to prevent start from being mutated in place
     end
@@ -187,13 +192,13 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     # Initialize values
 
-    cond_probs_memb = zeros(Float64, nrow(df), n_classes)
+    cond_probs_memb::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # Class share indices (= membership coefficients? )
-    Xb_share_tmp = [zeros(Real, nrow(df)) for _ in 1:n_classes]
+    Xb_share_tmp = [zeros(Real, nrows) for _ in 1:n_classes]
     # matrix of utilities
-    exp_mat_utils = zeros(Real, nrow(df), n_classes)
+    exp_mat_utils::Matrix{Float64} = zeros(Real, nrows, n_classes)
     # [1 x nclasses] vector of the likelihood of actual choice sequence
-    ProbSeq_n = zeros(1, n_classes)
+    ProbSeq_n::Matrix{Float64} = zeros(Float64, 1, n_classes)
 
     if method == :em
 
@@ -359,10 +364,10 @@ function StatsAPI.fit(::Type{LCLmodel},
     select!(df, Not(r"^lcl_"))
     DataFrames.hcat!(df, DataFrame(probs_memb, ["lcl_prob$x" for x in 1:n_classes]))
 
-    shares = @pipe combine(groupby(df, :id), Cols(r"^lcl_prob") .=> first, renamecols=false) |>
-                   combine(_, Cols(r"^lcl_prob") .=> mean, renamecols=false) |>
-                   Vector(_[1, :]) |>
-                   ForwardDiff.value.(ForwardDiff.value.(_)) # no clue why, but for some reason it needs two of those
+    shares::Vector{Float64} = let gdf = combine(groupby(df, :id), Cols(r"^lcl_prob") .=> first, renamecols=false)
+        m = Vector(combine(gdf, Cols(r"^lcl_prob") .=> mean, renamecols=false)[1, :])
+        ForwardDiff.value.(ForwardDiff.value.(m)) # no clue why, but for some reason it needs two of those
+    end
     
     probabilities_membership = @pipe select(df, :id, r"^lcl_prob") |>
                                      combine(groupby(_, :id), names(_) .=> first, renamecols=false)
