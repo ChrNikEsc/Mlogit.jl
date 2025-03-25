@@ -61,13 +61,21 @@ mlogit(formula, df_mlogit, weights=:weight)
 
 
 # fmlogit
+# df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
 
+# b_fmlogit = @benchmarkable Mlogit.fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), $df_fmlogit, multithreading=false) seconds = 30
+# results_fmlogit = run(b_fmlogit)
+# BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_fmlogit).allocs) * ".json", median(results_fmlogit))
 
-df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
+# reportopt_fmlogit = @report_opt Mlogit.fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=false)
+# println(reportopt_fmlogit)
 
-b_fmlogit = @benchmarkable Mlogit.fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), $df_fmlogit, multithreading=false) seconds = 30
-results_fmlogit = run(b_fmlogit)
-BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_fmlogit).allocs) * ".json", median(results_fmlogit))
+# lclogit
+df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
+b_lclogit = @benchmarkable lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), $df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit) seconds=30
+results_lclogit = run(b_lclogit)
+BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_lclogit).allocs) * ".json", median(results_lclogit))
 
-reportopt_fmlogit = @report_opt Mlogit.fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=false)
-println(reportopt_fmlogit)
+reportopt_lclogit = @report_opt lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 4, method=:em)
+println(reportopt_lclogit)
+

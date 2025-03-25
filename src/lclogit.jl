@@ -53,7 +53,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     # prevent provided data from being modified (is this the best solution?)
     df = DataFrame(df; copycols=false)
-    nrows = size(df, 1)
+    nrows::Int64 = size(df, 1)
 
     # check that no column in df starts with lcl_ as this will be used later
     if maximum(startswith.(names(df), "lcl_"))
@@ -81,17 +81,16 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     formula_schema = apply_schema(formula, s)
     formula_schema_memb = apply_schema(formula_membership, s_memb)
-    vec_choice = convert(BitVector, response(formula_schema, df))
-    mat_X = convert(Matrix{Float64}, modelmatrix(formula_schema, df))
-    mat_memb = convert(Matrix{Float64}, modelmatrix(formula_schema_memb, df))
+    vec_choice::BitVector, mat_X::Matrix{Float64} = StatsModels.modelcols(formula_schema, df)
+    mat_memb::Matrix{Float64} = convert(Matrix{Float64}, modelmatrix(formula_schema_memb, df))
     mat_memb = hcat(mat_memb, ones(Float64, nrows)) # add constant column. maybe this should be incorporated in formula but fmlogit would not expect that (always assumes constant)
 
 
-    response_name, coefnames_utility = StatsModels.coefnames(formula_schema)
+    response_name::String, coefnames_utility::Vector{String} = StatsModels.coefnames(formula_schema)
     _, coefnames_membership = StatsModels.coefnames(formula_schema_memb)
     coefnames_membership = [coefnames_membership;] # to ensure that it is a vector even if it has only one element
-    k_membership = Base.length(coefnames_membership)
-    k_utility = Base.length(coefnames_utility)
+    k_membership::Int64 = Base.length(coefnames_membership)
+    k_utility::Int64 = Base.length(coefnames_utility)
 
     # add first_by_id for first entry by id
     transform!(groupby(df, :id), eachindex => :lcl_first_by_id)
@@ -99,7 +98,8 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     transform!(df, :choice => (x -> convert.(Bool, x)), renamecols=false)
 
-    vec_id = df.id
+    vec_id::Vector{Int64} = df.id
+    n_id::Int64 = Base.length(unique(vec_id))
 
     # Chids
     vec_chid::Vector{Int64} = df[!, indices.chid]
@@ -107,9 +107,9 @@ function StatsAPI.fit(::Type{LCLmodel},
     # unique(vec_chid) != 1:length(unique(vec_chid)) && 
     remap_to_indices_chid!(vec_chid)
     idx_map = create_index_map(vec_chid)
-    n_chid = Base.length(unique(vec_chid))
+    n_chid::Int64 = Base.length(unique(vec_chid))
 
-    probs_memb = Matrix{Float64}(undef, nrow(df), n_classes)
+    probs_memb::Matrix{Float64} = Matrix{Float64}(undef, nrow(df), n_classes)
 
     # Start values
     # TODO seems to ignore start values when using method=:em
@@ -137,12 +137,12 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     function loglik_lc(theta)
         # initialise [N_subject x 1] vector of each subject's log-likelihood 
-        ll_n = zeros(eltype(theta), Base.length(unique(df.id)))
+        ll_n = zeros(eltype(theta), n_id)
 
         # coefficients mlogit
         mat_coefs_mlogit_ll = reshape(theta[begin:(n_classes*k_utility)], k_utility, n_classes)
         # coefficients membership
-        coefs_memb_ll = reshape(theta[(n_classes * Base.length(coefnames_utility)+1):end], (k_membership + 1), (n_classes - 1))
+        coefs_memb_ll = reshape(theta[(n_classes * k_utility+1):end], (k_membership + 1), (n_classes - 1))
 
         # matrix of utilities
         exp_mat_utils = exp.(mat_X * mat_coefs_mlogit_ll)
@@ -192,7 +192,7 @@ function StatsAPI.fit(::Type{LCLmodel},
             cond_probs_memb[vec_id.==n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ (ProbSeq_n * probs_memb_n[1:1, :]')
         end
 
-        return -sum(ll_n)
+        return -sum(ll_n)::Float64
     end
 
     if method == :em
@@ -227,7 +227,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
         function cond_probs_ll()
             # initialise [N_subject x 1] vector of each subject's log-likelihood 
-            ll_n = zeros(Base.length(unique(vec_id)))
+            ll_n = zeros(n_id)
 
             # matrix of utilities
             exp_mat_utils .= exp.(mat_X * coefs_mlogit)
@@ -359,7 +359,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     select!(df, Not(r"^lcl_"))
     DataFrames.hcat!(df, DataFrame(probs_memb, ["lcl_prob$x" for x in 1:n_classes]))
 
-    shares = @pipe combine(groupby(df, :id), Cols(r"^lcl_prob") .=> first, renamecols=false) |>
+    shares::Vector{Float64} = @pipe combine(groupby(df, :id), Cols(r"^lcl_prob") .=> first, renamecols=false) |>
                    combine(_, Cols(r"^lcl_prob") .=> mean, renamecols=false) |>
                    Vector(_[1, :]) |>
                    ForwardDiff.value.(ForwardDiff.value.(_)) # no clue why, but for some reason it needs two of those
@@ -367,12 +367,10 @@ function StatsAPI.fit(::Type{LCLmodel},
     probabilities_membership = @pipe select(df, :id, r"^lcl_prob") |>
                                      combine(groupby(_, :id), names(_) .=> first, renamecols=false)
 
-    n_coefficients = (k_membership+1)*(n_classes-1) + k_utility*n_classes
-    n_id = Base.length(unique(df.id))
-    n_chid = Base.length(unique(df.chid))
+    n_coefficients::Int64 = (k_membership+1)*(n_classes-1) + k_utility*n_classes
 
     loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)])
-    loglik_0 = -loglik_lc(zeros(Base.length(coefnames_utility) * n_classes + (Base.length(coefnames_membership) + 1) * (n_classes - 1)))
+    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)))
 
     r = LCLmodel(
         # coef=coefficients,
@@ -400,7 +398,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         responsename=response_name,
         score=nothing,
         shares=shares,
-        start=zeros(Base.length(coefnames_utility) * n_classes + (Base.length(coefnames_membership) + 1) * (n_classes - 1)),
+        start=zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)),
         startloglikelihood=loglik_0,
         time=time() - start_time,
         vcov=(@isdefined vcov) ? vcov : fill(0.0, n_coefficients, n_coefficients)
