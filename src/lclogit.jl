@@ -32,6 +32,66 @@ function lclogit(
     StatsAPI.fit(LCLmodel, formula, df, n_classes; start_memb=start_memb, start_mnl=start_mnl, indices=indices, method=method, quietly=quietly, varname_samplesplit=varname_samplesplit, max_iter=max_iter, ltolerance=ltolerance, multithreading=multithreading, optim_method=optim_method, optim_options=optim_options)
 end
 
+function loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
+    # initialise [N_subject x 1] vector of each subject's log-likelihood 
+    ll_n = zeros(eltype(theta), n_id)
+
+    # coefficients mlogit
+    mat_coefs_mlogit_ll = reshape(theta[begin:(n_classes*k_utility)], k_utility, n_classes)
+    # coefficients membership
+    coefs_memb_ll = reshape(theta[(n_classes * k_utility+1):end], (k_membership + 1), (n_classes - 1))
+
+    # matrix of utilities
+    exp_mat_utils = exp.(mat_X * mat_coefs_mlogit_ll)
+
+    # Class share indices (= membership coefficients? )
+    # Xb_share_tmp_ll = [zeros(eltype(theta), nrow(df)) for _ in 1:n_classes]
+
+    for c in 1:(n_classes-1)
+        Xb_share_tmp[c] = mat_memb * coefs_memb_ll[:, c]
+    end
+
+    exp_Xb_share = exp.(reduce(hcat, Xb_share_tmp))
+
+    # Class shares
+    probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+
+    # Compute conditional probabilities and log-likelihood
+    cond_probs_memb = zeros(eltype(theta), nrows, n_classes)
+
+    # loop over subjects
+    for n in unique(vec_id)
+        # read in data rows pertaining to subject n & store in a matrix suffixed _n
+        Y_n = vec_choice[vec_id.==n]
+        EXP_n = exp_mat_utils[vec_id.==n, :]
+        probs_memb_n = probs_memb[vec_id.==n, :]
+        chid_n = vec_chid[vec_id.==n]
+
+        # initialise [N_n x nclasses] matrix of conditional choice probabilities where N_n is # of data rows for subject n
+        cond_probs_memb_n = zeros(eltype(theta), Base.length(Y_n), n_classes)
+
+        # loop over choice sets t
+        for t in unique(chid_n)
+            # read in data rows pertaining to choice set t
+            EXP_nt = EXP_n[chid_n.==t, :]
+
+            # fill in choice probabilities	
+            cond_probs_memb_n[chid_n.==t, :] = EXP_nt ./ sum(EXP_nt, dims=1) #colsum
+        end
+
+        # [1 x nclasses] vector of the likelihood of actual choice sequence
+        ProbSeq_n = exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1)) #colsum
+
+        # compute subject n's log-likelihood
+        ll_n[n] = log.(ProbSeq_n * probs_memb_n[1, :])[1, 1]
+
+        # fill in subject n's conditional membership probabilities
+        cond_probs_memb[vec_id.==n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ (ProbSeq_n * probs_memb_n[1:1, :]')
+    end
+
+    return -sum(ll_n)
+end
+
 function StatsAPI.fit(::Type{LCLmodel},
     formula::FormulaTerm,
     df,
@@ -100,6 +160,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     transform!(df, :choice => (x -> convert.(Bool, x)), renamecols=false)
 
     vec_id = df.id
+    n_id = Base.length(unique(df.id))
 
     # Chids
     vec_chid::Vector{Int64} = df[!, indices.chid]
@@ -134,66 +195,6 @@ function StatsAPI.fit(::Type{LCLmodel},
     exp_mat_utils = zeros(Real, nrow(df), n_classes)
     # [1 x nclasses] vector of the likelihood of actual choice sequence
     ProbSeq_n = zeros(1, n_classes)
-
-    function loglik_lc(theta)
-        # initialise [N_subject x 1] vector of each subject's log-likelihood 
-        ll_n = zeros(eltype(theta), Base.length(unique(df.id)))
-
-        # coefficients mlogit
-        mat_coefs_mlogit_ll = reshape(theta[begin:(n_classes*k_utility)], k_utility, n_classes)
-        # coefficients membership
-        coefs_memb_ll = reshape(theta[(n_classes * Base.length(coefnames_utility)+1):end], (k_membership + 1), (n_classes - 1))
-
-        # matrix of utilities
-        exp_mat_utils = exp.(mat_X * mat_coefs_mlogit_ll)
-
-        # Class share indices (= membership coefficients? )
-        # Xb_share_tmp_ll = [zeros(eltype(theta), nrow(df)) for _ in 1:n_classes]
-
-        for c in 1:(n_classes-1)
-            Xb_share_tmp[c] = mat_memb * coefs_memb_ll[:, c]
-        end
-
-        exp_Xb_share = exp.(reduce(hcat, Xb_share_tmp))
-
-        # Class shares
-        probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
-
-        # Compute conditional probabilities and log-likelihood
-        cond_probs_memb = zeros(eltype(theta), nrow(df), n_classes)
-
-        # loop over subjects
-        for n in unique(vec_id)
-            # read in data rows pertaining to subject n & store in a matrix suffixed _n
-            Y_n = vec_choice[vec_id.==n]
-            EXP_n = exp_mat_utils[vec_id.==n, :]
-            probs_memb_n = probs_memb[vec_id.==n, :]
-            chid_n = vec_chid[vec_id.==n]
-
-            # initialise [N_n x nclasses] matrix of conditional choice probabilities where N_n is # of data rows for subject n
-            cond_probs_memb_n = zeros(eltype(theta), Base.length(Y_n), n_classes)
-
-            # loop over choice sets t
-            for t in unique(chid_n)
-                # read in data rows pertaining to choice set t
-                EXP_nt = EXP_n[chid_n.==t, :]
-
-                # fill in choice probabilities	
-                cond_probs_memb_n[chid_n.==t, :] = EXP_nt ./ sum(EXP_nt, dims=1) #colsum
-            end
-
-            # [1 x nclasses] vector of the likelihood of actual choice sequence
-            ProbSeq_n = exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1)) #colsum
-
-            # compute subject n's log-likelihood
-            ll_n[n] = log.(ProbSeq_n * probs_memb_n[1, :])[1, 1]
-
-            # fill in subject n's conditional membership probabilities
-            cond_probs_memb[vec_id.==n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ (ProbSeq_n * probs_memb_n[1:1, :]')
-        end
-
-        return -sum(ll_n)
-    end
 
     if method == :em
 
@@ -335,7 +336,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     elseif method == :gradient
 
-        opt = Optim.optimize(loglik_lc, [vec(coefs_mlogit); vec(coefs_memb)], optim_method, autodiff=:forward, optim_options)
+        opt = Optim.optimize(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), [vec(coefs_mlogit); vec(coefs_memb)], optim_method, autodiff=:forward, optim_options)
         coefficients = Optim.minimizer(opt)
         coefs_mlogit .= reshape(coefficients[1:(k_utility*n_classes)], k_utility, n_classes)
         coefs_memb .= reshape(coefficients[(k_utility*n_classes+1):end], (k_membership + 1), (n_classes - 1))
@@ -343,8 +344,8 @@ function StatsAPI.fit(::Type{LCLmodel},
         converged = Optim.converged(opt)
         iter = Optim.iterations(opt)
 
-        gradient = ForwardDiff.gradient(loglik_lc, coefficients)
-        hessian = ForwardDiff.hessian(loglik_lc, coefficients)
+        gradient = ForwardDiff.gradient(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
+        hessian = ForwardDiff.hessian(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
         vcov = inv(hessian)
 
     else
@@ -368,11 +369,9 @@ function StatsAPI.fit(::Type{LCLmodel},
                                      combine(groupby(_, :id), names(_) .=> first, renamecols=false)
 
     n_coefficients = (k_membership+1)*(n_classes-1) + k_utility*n_classes
-    n_id = Base.length(unique(df.id))
-    n_chid = Base.length(unique(df.chid))
 
-    loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)])
-    loglik_0 = -loglik_lc(zeros(Base.length(coefnames_utility) * n_classes + (Base.length(coefnames_membership) + 1) * (n_classes - 1)))
+    loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
+    loglik_0 = -loglik_lc(zeros(Base.length(coefnames_utility) * n_classes + (Base.length(coefnames_membership) + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
 
     r = LCLmodel(
         # coef=coefficients,
@@ -400,7 +399,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         responsename=response_name,
         score=nothing,
         shares=shares,
-        start=zeros(Base.length(coefnames_utility) * n_classes + (Base.length(coefnames_membership) + 1) * (n_classes - 1)),
+        start=zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)),
         startloglikelihood=loglik_0,
         time=time() - start_time,
         vcov=(@isdefined vcov) ? vcov : fill(0.0, n_coefficients, n_coefficients)
