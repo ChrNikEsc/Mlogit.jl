@@ -227,7 +227,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
         function cond_probs_ll()
             # initialise [N_subject x 1] vector of each subject's log-likelihood 
-            ll_n = zeros(Base.length(unique(vec_id)))
+            ll_n = zeros(n_id)
 
             # matrix of utilities
             exp_mat_utils .= exp.(mat_X * coefs_mlogit)
@@ -370,7 +370,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     n_coefficients = (k_membership+1)*(n_classes-1) + k_utility*n_classes
 
     loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
-    loglik_0 = -loglik_lc(zeros(Base.length(coefnames_utility) * n_classes + (Base.length(coefnames_membership) + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
+    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
 
     r = LCLmodel(
         # coef=coefficients,
