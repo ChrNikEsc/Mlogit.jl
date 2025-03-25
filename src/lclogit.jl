@@ -141,8 +141,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     formula_schema = apply_schema(formula, s)
     formula_schema_memb = apply_schema(formula_membership, s_memb)
-    vec_choice = convert(BitVector, response(formula_schema, df))
-    mat_X = convert(Matrix{Float64}, modelmatrix(formula_schema, df))
+    vec_choice::BitVector, mat_X::Matrix{Float64} = modelcols(formula_schema, df)
     mat_memb = convert(Matrix{Float64}, modelmatrix(formula_schema_memb, df))
     mat_memb = hcat(mat_memb, ones(Float64, nrows)) # add constant column. maybe this should be incorporated in formula but fmlogit would not expect that (always assumes constant)
 
