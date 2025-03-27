@@ -44,6 +44,9 @@ function loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid,
     # matrix of utilities
     exp_mat_utils = exp.(mat_X * mat_coefs_mlogit_ll)
 
+    # Class share indices (= membership coefficients? )
+    # Xb_share_tmp_ll = [zeros(eltype(theta), nrow(df)) for _ in 1:n_classes]
+
     for c in 1:(n_classes-1)
         Xb_share_tmp[c] = mat_memb * coefs_memb_ll[:, c]
     end
@@ -109,13 +112,18 @@ function StatsAPI.fit(::Type{LCLmodel},
     start_time = time()
 
     # prevent provided data from being modified (is this the best solution?)
-    # df = DataFrame(df; copycols=false)
+    df = DataFrame(df; copycols=false)
     nrows = size(df, 1)
 
-    # # check that no column in df starts with lcl_ as this will be used later
-    # if maximum(startswith.(names(df), "lcl_"))
-    #     error("Column names must not start with \"lcl_\" as this is reserved for columns created by the algorithm")
-    # end
+    # check that no column in df starts with lcl_ as this will be used later
+    if maximum(startswith.(names(df), "lcl_"))
+        error("Column names must not start with \"lcl_\" as this is reserved for columns created by the algorithm")
+    end
+
+    for x in 1:n_classes
+        df[!, "lcl_H$x"] .= 1 / n_classes # doesn't matter what to write here, will be replaced later
+    end
+
 
     # ---------------------------------------------------------------------------- #
     #                                 Parse formula                                #
@@ -134,7 +142,6 @@ function StatsAPI.fit(::Type{LCLmodel},
     formula_schema = apply_schema(formula, s)
     formula_schema_memb = apply_schema(formula_membership, s_memb)
     vec_choice::BitVector, mat_X::Matrix{Float64} = modelcols(formula_schema, df)
-
     mat_memb::Matrix{Float64} = convert(Matrix{Float64}, modelmatrix(formula_schema_memb, df))
     mat_memb = hcat(mat_memb, ones(Float64, nrows)) # add constant column. maybe this should be incorporated in formula but fmlogit would not expect that (always assumes constant)
 
@@ -148,10 +155,16 @@ function StatsAPI.fit(::Type{LCLmodel},
     vec_id::Vector{Int64} = Vector{Int64}(df.id)
     n_id::Int64 = Base.length(unique(vec_id))
 
+    # add first_by_id for first entry by id
+    transform!(groupby(df, :id), eachindex => :lcl_first_by_id)
+    transform!(df, :lcl_first_by_id => (x -> ifelse.(x .== 1, 1, 0)) => :lcl_first_by_id) # can't this be done in one line??
+
     # for changing to array-based code
     lcl_first_by_id = let seen = Set()
         [id in seen ? 0 : (push!(seen, id); 1) for id in vec_id]
     end
+
+    transform!(df, :choice => (x -> convert.(Bool, x)), renamecols=false)
 
     # Chids
     vec_chid::Vector{Int64} = df[!, indices.chid]
@@ -161,7 +174,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     # idx_map = create_index_map(vec_chid)
     n_chid::Int64 = Base.length(unique(vec_chid))
 
-    probs_memb = Matrix{Float64}(undef, nrows, n_classes)
+    probs_memb = Matrix{Float64}(undef, nrow(df), n_classes)
 
     # Start values
     # TODO seems to ignore start values when using method=:em
@@ -193,36 +206,29 @@ function StatsAPI.fit(::Type{LCLmodel},
 
         prop = 1 / n_classes
 
-        function create_lcl_s(vec_id, lcl_first_by_id, n_classes, prop)
-            # Get unique IDs and their first positions
-            unique_ids = unique(vec_id)
-            first_positions = findall(==(1), lcl_first_by_id)
-            
-            # Assign random class probabilities to each ID
-            id_to_class = Dict{eltype(vec_id), Int}()
-            for id in unique_ids
-                rand_val = rand(Uniform())
-                class = findfirst(>(rand_val), cumsum(repeat([prop], n_classes)))
-                id_to_class[id] = isnothing(class) ? n_classes : class
-            end
-            
-            # Expand to full vector
-            [id_to_class[id] for id in vec_id]
-        end
-
-        lcl_s::Vector{Float64} = if !isnothing(varname_samplesplit)
-            df[!, Symbol(varname_samplesplit)]
+        if !isnothing(varname_samplesplit)
+            rename!(df, Symbol(varname_samplesplit) => :lcl_s)
+            (combine(groupby(df, :id), :lcl_s => std).lcl_s_std |> sum) == 0 || error("There must be no variation in $(varname_samplesplit) within $(varnames_structure.id).")
+            sort(unique(df.lcl_s)) == 1:n_classes || error("$varname_samplesplit must consist of all elements in $(1:n_classes), but no others.")
         else
-            create_lcl_s(vec_id, lcl_first_by_id, n_classes, prop)
+            transform!(df, :lcl_first_by_id => (x -> rand(Uniform(), nrow(df)) .* x) => :lcl_p)
+            transform!(groupby(df, :id), :lcl_p => sum => :lcl_pr)
+            transform!(df, :lcl_pr => (pr -> (pr .<= prop) * 1) => :lcl_s)
+            for ss in 2:n_classes
+                transform!(df, [:lcl_pr, :lcl_s] => ((pr, s) -> ifelse.((pr .> (ss .- 1) .* prop) .& (pr .<= (ss .* prop)), ss, s)) => :lcl_s)
+            end
+            # remove unnecessary helper columns
+            select!(df, Not([:lcl_p, :lcl_pr]))
         end
-
-        lcl_H::Matrix{Float64} = Matrix(undef, nrows, n_classes)
 
         sumll = Float64[]
 
         for s in 1:n_classes
-            coefs_mlogit[:, s] .= coef(mlogit(formula, df[lcl_s .== s, :]))
+            coefs_mlogit[:, s] .= coef(mlogit(formula, subset(df, :lcl_s => x -> x .== s)))
         end
+
+        # Class share indices (= membership coefficients? )
+        # Xb_share_tmp = [zeros(eltype(coefs_memb), nrows) for _ in 1:n_classes]
 
         function cond_probs_ll()
             # initialise [N_subject x 1] vector of each subject's log-likelihood 
@@ -271,7 +277,7 @@ function StatsAPI.fit(::Type{LCLmodel},
             end
             push!(sumll, sum(ll_n))
             for x in 1:n_classes
-                lcl_H[:, x] .= cond_probs_memb[:, x]
+                df[!, "lcl_H$x"] .= cond_probs_memb[:, x]
             end
         end
 
@@ -286,7 +292,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         llincrease = 9999.9
 
         while iter <= max_iter
-            call_mlogit_coef(s) = fit_mlogit(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, lcl_H[:, s][vec_choice])
+            call_mlogit_coef(s) = fit_mlogit(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, df[:, "lcl_H$s"][vec_choice])
             # Update the probability of the agent's sequence of choices
             if multithreading
                 Threads.@threads for s in 1:n_classes
@@ -305,8 +311,12 @@ function StatsAPI.fit(::Type{LCLmodel},
                 Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
                 coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
             else
-                opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id .== 1, :], mat_memb[lcl_first_by_id .== 1, :], fill(1.0, n_id), 1, n_classes), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
-                coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes-1)
+                df_fmlogit = subset(df, :lcl_first_by_id => ByRow(==(1)))
+                # NelderMead() is much faster and approaches the true values very fast, although not converging.
+                coefs_memb .= fmlogit(formula_membership, df_fmlogit, start=coefs_memb, multithreading=multithreading).coef[:, 1:(n_classes-1)]
+                # coefs_memb .= fmlogit(formula_membership, df_fmlogit, start=coefs_memb, method=NelderMead(), optim_options=Optim.Options(iterations=1000), multithreading=multithreading).coef[:, 1:(n_classes-1)]
+                # TODO change back to coef() after it is implemented for fmlogit again
+
             end
 
             cond_probs_ll()
@@ -324,6 +334,8 @@ function StatsAPI.fit(::Type{LCLmodel},
 
             # If not converged, restart loop
             iter += 1
+
+            iszero(iter % 20) && GC.gc()
         end
 
     elseif method == :gradient
@@ -337,17 +349,29 @@ function StatsAPI.fit(::Type{LCLmodel},
         iter = Optim.iterations(opt)
 
         gradient = ForwardDiff.gradient(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
-        hessian::Marix{Float64} = ForwardDiff.hessian(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
+        hessian = ForwardDiff.hessian(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
         vcov = inv(hessian)
 
     else
         error("Unknown method. Choose :em or :gradient")
     end
 
-    shares::Vector{Float64} = let m = vec(mean(probs_memb[lcl_first_by_id .== 1, :], dims=1))
+    # estimate all models one final time to return them
+    df_fmlogit = subset(df, :lcl_first_by_id => ByRow(==(1)))
+    # model_memb = fmlogit(formula_membership, df_fmlogit, start=coefs_memb, multithreading=multithreading)
+    # models_mnl = [mlogit(formula, df, weights=Symbol("lcl_H$s"), start=coefs_mlogit[:, s], return_Hessian_vcov=true, skip_optimization=true) for s in 1:n_classes]
+
+    select!(df, Not(r"^lcl_"))
+    DataFrames.hcat!(df, DataFrame(probs_memb, ["lcl_prob$x" for x in 1:n_classes]))
+
+    shares::Vector{Float64} = let gdf = combine(groupby(df, :id), Cols(r"^lcl_prob") .=> first, renamecols=false)
+        m = Vector(combine(gdf, Cols(r"^lcl_prob") .=> mean, renamecols=false)[1, :])
         ForwardDiff.value.(ForwardDiff.value.(m)) # no clue why, but for some reason it needs two of those
     end
     
+    probabilities_membership = @pipe select(df, :id, r"^lcl_prob") |>
+                                     combine(groupby(_, :id), names(_) .=> first, renamecols=false)
+
     n_coefficients = (k_membership+1)*(n_classes-1) + k_utility*n_classes
 
     loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
