@@ -24,33 +24,8 @@ function fmlogit(
                                         (w ./ sum(w)) .* n
                                     end
 
-    function loglik_fmlogit(betas)
-        betamat = [transpose(reshape(betas, k + 1, j - 1)); zeros(k + 1)']
-        L = zeros(eltype(betas), j)
-
-        X_betamat = X * transpose(betamat)
-
-        log_sum_exp_Xb = log.(sum(exp.(X_betamat), dims=2))
-
-        function call_L(i)
-            return sum(view(y, :, i) .* (view(X_betamat, :, i) - log_sum_exp_Xb))
-        end
-
-        if multithreading
-            Threads.@threads for i in 1:j
-                L[i] = call_L(i) * vec_weights[i]
-            end
-        else
-            for i in 1:j
-                L[i] = call_L(i) * vec_weights[i]
-            end
-        end
-
-        return -sum(L)
-    end
-
     if !skip_optimization
-        opt = Optim.optimize(loglik_fmlogit, vec(start), method, optim_options, autodiff=:forward)
+        opt = Optim.optimize(theta -> loglik_fmlogit(theta, y, X, vec_weights, k, j), vec(start), method, optim_options, autodiff=:forward)
     end
 
     coefficients::Matrix{Float64} = if skip_optimization
@@ -74,11 +49,11 @@ function fmlogit(
 
     # Pre-allocate gradient array
     gradient = zeros(Float64, Base.length(coefficients))
-    ForwardDiff.gradient!(gradient, loglik_fmlogit, vec(coefficients))  # In-place gradient computation
+    ForwardDiff.gradient!(gradient, theta -> loglik_fmlogit(theta, y, X, vec_weights, k, j), vec(coefficients))  # In-place gradient computation
 
-    loglik::Float64 = -loglik_fmlogit(coefficients)
-    loglik_0::Float64 = -loglik_fmlogit(zeros((k + 1) * (j - 1)))
-    loglik_start::Float64 = -loglik_fmlogit(start)
+    loglik::Float64 = -loglik_fmlogit(coefficients, y, X, vec_weights, k, j)
+    loglik_0::Float64 = -loglik_fmlogit(zeros((k + 1) * (j - 1)), y, X, vec_weights, k, j)
+    loglik_start::Float64 = -loglik_fmlogit(start, y, X, vec_weights, k, j)
     n_coefficients::Int64 = Base.length(coefficients)
 
     if !converged && !skip_optimization
@@ -119,3 +94,31 @@ function fmlogit(
     )
     return r
 end;
+
+function loglik_fmlogit(theta, y, X, vec_weights, k, j)
+    betamat = [transpose(reshape(theta, k + 1, j - 1)); zeros(k + 1)']
+    L = zeros(eltype(theta), j)
+
+    X_betamat = X * transpose(betamat)
+
+    log_sum_exp_Xb = log.(sum(exp.(X_betamat), dims=2))
+
+    function call_L(i)
+        return sum(view(y, :, i) .* (view(X_betamat, :, i) - log_sum_exp_Xb))
+    end
+
+    # if multithreading
+    #     Threads.@threads for i in 1:j
+    #         L[i] = call_L(i) * vec_weights[i]
+    #     end
+    # else
+        for i in 1:j
+            L[i] = call_L(i) * vec_weights[i]
+        end
+    # end
+
+    return -sum(L)
+end
+
+
+# fit_fmlogit()

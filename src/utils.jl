@@ -309,7 +309,8 @@ function parse_membership(@nospecialize(f::FormulaTerm), n_classes)
         # Flatten and extract individual symbols
         predictors = vcat(map(membershipsymbol, membership_terms)...)
         # Construct the membership formula with individual terms
-        formula_membership = FormulaTerm(foldl(+, term.("lcl_H$s") for s in 1:n_classes), foldl(+, predictors))
+        # formula_membership = FormulaTerm(foldl(+, term.("lcl_H$s") for s in 1:n_classes), foldl(+, predictors))
+        formula_membership = FormulaTerm(ConstantTerm(1), foldl(+, predictors))
 
         return formula_main, formula_membership
     else
