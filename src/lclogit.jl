@@ -32,7 +32,7 @@ function lclogit(
     StatsAPI.fit(LCLmodel, formula, df, n_classes; start_memb=start_memb, start_mnl=start_mnl, indices=indices, method=method, quietly=quietly, varname_samplesplit=varname_samplesplit, max_iter=max_iter, ltolerance=ltolerance, multithreading=multithreading, optim_method=optim_method, optim_options=optim_options)
 end
 
-function loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
+function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64}, Xb_share_tmp::Matrix{Real}, vec_id::Vector{Int64}, n_id::Int64, vec_chid::Vector{Int64}, vec_choice::BitVector, n_classes::Int64, k_utility::Int64, k_membership::Int64, nrows::Int64)
     # initialise [N_subject x 1] vector of each subject's log-likelihood 
     ll_n = zeros(eltype(theta), n_id)
 
@@ -45,10 +45,10 @@ function loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid,
     exp_mat_utils = exp.(mat_X * mat_coefs_mlogit_ll)
 
     for c in 1:(n_classes-1)
-        Xb_share_tmp[c] = mat_memb * coefs_memb_ll[:, c]
+        Xb_share_tmp[:, c] .= mat_memb * coefs_memb_ll[:, c]
     end
 
-    exp_Xb_share = exp.(reduce(hcat, Xb_share_tmp))
+    exp_Xb_share = exp.(Xb_share_tmp)
 
     # Class shares
     probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
@@ -149,8 +149,8 @@ function StatsAPI.fit(::Type{LCLmodel},
     n_id::Int64 = Base.length(unique(vec_id))
 
     # for changing to array-based code
-    lcl_first_by_id = let seen = Set()
-        [id in seen ? 0 : (push!(seen, id); 1) for id in vec_id]
+    lcl_first_by_id::BitVector = let seen = Set()
+        [id in seen ? false : (push!(seen, id); true) for id in vec_id]
     end
 
     # Chids
@@ -181,9 +181,9 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     cond_probs_memb::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # Class share indices (= membership coefficients? )
-    Xb_share_tmp = [zeros(Real, nrows) for _ in 1:n_classes]
+    Xb_share_tmp::Matrix{Real} = zeros(Real, nrows, n_classes)
     # matrix of utilities
-    exp_mat_utils::Matrix{Float64} = zeros(Real, nrows, n_classes)
+    exp_mat_utils::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # [1 x nclasses] vector of the likelihood of actual choice sequence
     ProbSeq_n::Matrix{Float64} = zeros(Float64, 1, n_classes)
 
@@ -196,7 +196,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         function create_lcl_s(vec_id, lcl_first_by_id, n_classes, prop)
             # Get unique IDs and their first positions
             unique_ids = unique(vec_id)
-            first_positions = findall(==(1), lcl_first_by_id)
+            first_positions = findall(true, lcl_first_by_id)
             
             # Assign random class probabilities to each ID
             id_to_class = Dict{eltype(vec_id), Int}()
@@ -232,10 +232,10 @@ function StatsAPI.fit(::Type{LCLmodel},
             exp_mat_utils .= exp.(mat_X * coefs_mlogit)
 
             for c in 1:(n_classes-1)
-                Xb_share_tmp[c] = mat_memb * coefs_memb[:, c]
+                Xb_share_tmp[:, c] .= mat_memb * coefs_memb[:, c]
             end
 
-            exp_Xb_share = exp.(reduce(hcat, Xb_share_tmp))
+            exp_Xb_share = exp.(Xb_share_tmp)
 
             # Class shares
             probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
@@ -305,7 +305,7 @@ function StatsAPI.fit(::Type{LCLmodel},
                 Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
                 coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
             else
-                opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id .== 1, :], mat_memb[lcl_first_by_id .== 1, :], fill(1.0, n_id), 1, n_classes), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
+                opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), 1, n_classes), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
                 coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes-1)
             end
 
@@ -337,14 +337,14 @@ function StatsAPI.fit(::Type{LCLmodel},
         iter = Optim.iterations(opt)
 
         gradient = ForwardDiff.gradient(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
-        hessian::Marix{Float64} = ForwardDiff.hessian(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
+        hessian::Matrix{Float64} = ForwardDiff.hessian(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
         vcov = inv(hessian)
 
     else
         error("Unknown method. Choose :em or :gradient")
     end
 
-    shares::Vector{Float64} = let m = vec(mean(probs_memb[lcl_first_by_id .== 1, :], dims=1))
+    shares::Vector{Float64} = let m = vec(mean(probs_memb[lcl_first_by_id, :], dims=1))
         ForwardDiff.value.(ForwardDiff.value.(m)) # no clue why, but for some reason it needs two of those
     end
     

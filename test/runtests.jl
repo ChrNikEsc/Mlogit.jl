@@ -50,11 +50,11 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
     # model_fmlogit = fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=true)
 
     # lclogit
-    model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
-    # @test model_lclogit_em.loglikelihood ≈ -1006.354500868
+    model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
+    @test model_lclogit_em.loglikelihood ≈ -1006.354500868
     
-#     model_lclogit_grad = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient)
-#     @test model_lclogit_grad.loglikelihood ≈ -1006.3534820949649
+    model_lclogit_grad = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient)
+    @test model_lclogit_grad.loglikelihood ≈ -1006.3534820949649
 # end
 
 
