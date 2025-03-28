@@ -6,6 +6,7 @@ using Reexport
 @reexport using StatsModels
 
 using StatsBase, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Distributions, Makie, CairoMakie, Combinatorics
+using StaticArrays
 using Optim, Distributions, LineSearches
 using ForwardDiff
 using FiniteDifferences
