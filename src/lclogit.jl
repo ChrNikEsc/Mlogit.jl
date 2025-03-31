@@ -35,10 +35,13 @@ end
 function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64}, 
                    Xb_share_tmp::Matrix{Real}, vec_id::Vector{Int64}, n_id::Int64, 
                    vec_chid::Vector{Int64}, vec_choice::BitVector, n_classes::Int64, 
-                   k_utility::Int64, k_membership::Int64, nrows::Int64)
+                   k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n)
 
     # Preallocate memory for log-likelihood
-    ll_n = zeros(eltype(theta), n_id)
+    # ll_n = zeros(eltype(theta), n_id)
+    if eltype(ll_n) ≠ eltype(theta)
+        ll_n = zeros(eltype(theta), n_id)
+    end
 
     # Reshape coefficients
     mat_coefs_mlogit_ll = reshape(theta[begin:(n_classes*k_utility)], k_utility, n_classes)
@@ -203,6 +206,8 @@ function StatsAPI.fit(::Type{LCLmodel},
     # [1 x nclasses] vector of the likelihood of actual choice sequence
     ProbSeq_n::Matrix{Float64} = zeros(Float64, 1, n_classes)
 
+    ll_n = zeros(Float64, n_id)
+
     if method == :em
 
         ### split sample
@@ -242,7 +247,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
         function cond_probs_ll()
             # initialise [N_subject x 1] vector of each subject's log-likelihood 
-            ll_n = zeros(n_id)
+            # ll_n = zeros(n_id)
 
             # matrix of utilities
             exp_mat_utils .= exp.(mat_X * coefs_mlogit)
@@ -341,10 +346,12 @@ function StatsAPI.fit(::Type{LCLmodel},
             # If not converged, restart loop
             iter += 1
         end
+        
+        loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
 
     elseif method == :gradient
 
-        opt = Optim.optimize(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), [vec(coefs_mlogit); vec(coefs_memb)], optim_method, autodiff=:forward, optim_options)
+        opt = Optim.optimize(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n), [vec(coefs_mlogit); vec(coefs_memb)], optim_method, autodiff=:forward, optim_options)
         coefficients = Optim.minimizer(opt)
         coefs_mlogit .= reshape(coefficients[1:(k_utility*n_classes)], k_utility, n_classes)
         coefs_memb .= reshape(coefficients[(k_utility*n_classes+1):end], (k_membership + 1), (n_classes - 1))
@@ -352,8 +359,13 @@ function StatsAPI.fit(::Type{LCLmodel},
         converged = Optim.converged(opt)
         iter = Optim.iterations(opt)
 
-        gradient = ForwardDiff.gradient(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
-        hessian::Matrix{Float64} = ForwardDiff.hessian(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows), coefficients)
+        diffresult = DiffResults.HessianResult(coefficients)
+        diffresult = ForwardDiff.hessian!(diffresult, theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n), coefficients);
+
+        loglik = -DiffResults.value(diffresult)
+        gradient = DiffResults.gradient(diffresult)
+        hessian = DiffResults.hessian(diffresult)
+
         vcov = inv(hessian)
 
     else
@@ -366,8 +378,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     
     n_coefficients = (k_membership+1)*(n_classes-1) + k_utility*n_classes
 
-    loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
-    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows)
+    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
 
     r = LCLmodel(
         # coef=coefficients,

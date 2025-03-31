@@ -1076,7 +1076,7 @@ uuid = "e1d29d7a-bbdc-5cf2-9ac0-f12de2c33e28"
 version = "1.2.0"
 
 [[deps.Mlogit]]
-deps = ["CSV", "CairoMakie", "Combinatorics", "DataFrames", "DataStructures", "Distributions", "FiniteDifferences", "ForwardDiff", "LineSearches", "LinearAlgebra", "Makie", "Optim", "Pipe", "Printf", "Reexport", "RegressionTables", "StaticArrays", "StatsAPI", "StatsBase", "StatsModels", "Vcov"]
+deps = ["CSV", "CairoMakie", "Combinatorics", "DataFrames", "DataStructures", "DiffResults", "Distributions", "FiniteDifferences", "ForwardDiff", "LineSearches", "LinearAlgebra", "Makie", "Optim", "Pipe", "Printf", "Reexport", "RegressionTables", "StaticArrays", "StatsAPI", "StatsBase", "StatsModels", "Vcov"]
 path = ".."
 uuid = "ccfc7dc1-42c1-46a8-a22f-d184fa7e6d0f"
 version = "1.0.0-DEV"

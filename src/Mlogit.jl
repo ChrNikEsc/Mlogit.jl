@@ -9,6 +9,7 @@ using StatsBase, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Distri
 using StaticArrays
 using Optim, Distributions, LineSearches
 using ForwardDiff
+using DiffResults
 using FiniteDifferences
 using LinearAlgebra: diag, dot, mul!
 # using NamedArrays # used to be in fmlogit.jl but might no longer be necessary
