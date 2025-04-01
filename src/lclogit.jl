@@ -1,15 +1,3 @@
-function get_used_memory_percentage()
-    # Command to get memory usage percentage
-    cmd = `bash -c "free | awk '/Mem:/ {print \$3/\$2 * 100}'"`
-
-    # Execute the command and read the output
-    output = read(cmd, String)
-
-    # Convert output to a float and return
-    return parse(Float64, output)
-end
-
-
 function lclogit(
     formula::FormulaTerm,
     df,
@@ -181,7 +169,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     # idx_map = create_index_map(vec_chid)
     n_chid::Int64 = Base.length(unique(vec_chid))
 
-    probs_memb = Matrix{Float64}(undef, nrows, n_classes)
+    probs_memb = Matrix{Real}(undef, nrows, n_classes)
 
     # Start values
     # TODO seems to ignore start values when using method=:em
@@ -349,7 +337,6 @@ function StatsAPI.fit(::Type{LCLmodel},
         end
         
         loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)::Float64
-
     elseif method == :gradient
 
         function loglik_obj(theta)
@@ -370,22 +357,16 @@ function StatsAPI.fit(::Type{LCLmodel},
         # Run optimization
         opt = Optim.optimize(fdf, [vec(coefs_mlogit); vec(coefs_memb)], optim_method, optim_options)
 
-        # opt = Optim.optimize(theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n), [vec(coefs_mlogit); vec(coefs_memb)], optim_method, autodiff=:forward, optim_options)
         coefficients = Optim.minimizer(opt)
         coefs_mlogit .= reshape(coefficients[1:(k_utility*n_classes)], k_utility, n_classes)
         coefs_memb .= reshape(coefficients[(k_utility*n_classes+1):end], (k_membership + 1), (n_classes - 1))
 
         converged = Optim.converged(opt)
         iter = Optim.iterations(opt)
-
     else
         error("Unknown method. Choose :em or :gradient")
     end
 
-    shares::Vector{Float64} = let m = vec(mean(probs_memb[lcl_first_by_id, :], dims=1))
-        ForwardDiff.value.(ForwardDiff.value.(m)) # no clue why, but for some reason it needs two of those
-    end
-    shares = fill(0.0, n_classes)
 
     diffresult = DiffResults.HessianResult([vec(coefs_mlogit); vec(coefs_memb)])
     diffresult = ForwardDiff.hessian!(diffresult, theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n), [vec(coefs_mlogit); vec(coefs_memb)]);
@@ -395,6 +376,17 @@ function StatsAPI.fit(::Type{LCLmodel},
     vcov = inv(hessian)
     loglik = -DiffResults.value(diffresult)::Float64
     loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
+
+    # shares calculation
+    for c in 1:(n_classes-1)
+        Xb_share_tmp[:, c] .= mat_memb * coefs_memb[:, c]
+    end
+
+    exp_Xb_share = exp.(Xb_share_tmp)
+
+    # Class shares
+    probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+    shares::Vector{Float64} = vec(mean(probs_memb[lcl_first_by_id, :], dims=1))
 
     r = LCLmodel(
         # coef=coefficients,

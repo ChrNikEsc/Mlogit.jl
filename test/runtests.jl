@@ -5,24 +5,24 @@ using CSV, DataFrames
 
 const mlogit_datadir = joinpath(dirname(@__FILE__), "..", "data/")
 
-# # mlogit
-# electrictiy_long = CSV.read(mlogit_datadir * "electricity_long.csv", DataFrame)
-# # subset!(electrictiy_long, :id => x -> x .∈ [1:100])
-# df_mlogit = electrictiy_long
-# transform!(groupby(df_mlogit, :chid), eachindex => :alt)
-# transform!(df_mlogit, :id => (id -> 2 * id .- 5) => :x1)
-# transform!(df_mlogit, :x1 => (x1 -> 1 / 2 * x1) => :x2)
-# transform!(df_mlogit, :id => (x -> x / sum(unique(df_mlogit.id))) => :weight)
-# transform!(df_mlogit, :id => (x -> ifelse.(x .> 30, "a", "b")) => :cluster)
+# mlogit
+electrictiy_long = CSV.read(mlogit_datadir * "electricity_long.csv", DataFrame)
+# subset!(electrictiy_long, :id => x -> x .∈ [1:100])
+df_mlogit = electrictiy_long
+transform!(groupby(df_mlogit, :chid), eachindex => :alt)
+transform!(df_mlogit, :id => (id -> 2 * id .- 5) => :x1)
+transform!(df_mlogit, :x1 => (x1 -> 1 / 2 * x1) => :x2)
+transform!(df_mlogit, :id => (x -> x / sum(unique(df_mlogit.id))) => :weight)
+transform!(df_mlogit, :id => (x -> ifelse.(x .> 30, "a", "b")) => :cluster)
 
-# # nlogit
-# HCdata = CSV.read(mlogit_datadir * "HCdata.csv", DataFrame)
-# rename!(HCdata, Symbol.(replace.(String.(names(HCdata)), "." => "_")))
-# transform!(HCdata, :id => :chid)
-# transform!(HCdata, :alt => ByRow(x -> ifelse(x ∈ ["gcc", "ecc", "erc", "hpc"], "cooling", "others")) => :nest)
+# nlogit
+HCdata = CSV.read(mlogit_datadir * "HCdata.csv", DataFrame)
+rename!(HCdata, Symbol.(replace.(String.(names(HCdata)), "." => "_")))
+transform!(HCdata, :id => :chid)
+transform!(HCdata, :alt => ByRow(x -> ifelse(x ∈ ["gcc", "ecc", "erc", "hpc"], "cooling", "others")) => :nest)
 
-# # fmlogit
-# df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
+# fmlogit
+df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
 
 # lclogit
 df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
@@ -59,5 +59,8 @@ end
 
 
 
+# Mlogit.regtable(model_lclogit_em)
 # Mlogit.regtable(model_lclogit_grad)
+
+# Mlogit.coefplot(model_lclogit_em)
 # Mlogit.coefplot(model_lclogit_grad)
