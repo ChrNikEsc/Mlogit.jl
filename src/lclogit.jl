@@ -34,10 +34,8 @@ function create_chid_map(vec_chid, vec_id, n_id)
     return id_map, chid_map
 end
 
-# Updated function with chid_map passed as an argument
 function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64}, 
-                   Xb_share_tmp::Matrix{Real}, n_id::Int64, 
-                   vec_choice::BitVector, n_classes::Int64, 
+                    n_id::Int64, vec_choice::BitVector, n_classes::Int64, 
                    k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n, 
                    id_map::Dict, chid_map::Dict)
 
@@ -51,7 +49,9 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
     coefs_memb_ll = reshape(theta[(n_classes * k_utility + 1):end], (k_membership + 1), (n_classes - 1))
 
     # Ensure exp_mat_utils can store Dual numbers
-    exp_mat_utils = similar(mat_X, eltype(theta), size(mat_X, 1), n_classes)
+    exp_mat_utils = zeros(eltype(theta), size(mat_X, 1), n_classes)
+
+    exp_Xb_share = zeros(eltype(theta), nrows, n_classes)
 
     # Efficient matrix multiplication
     mul!(exp_mat_utils, mat_X, mat_coefs_mlogit_ll)
@@ -61,9 +61,9 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
 
     # Compute membership probabilities efficiently
     @inbounds for c in 1:(n_classes-1)
-        Xb_share_tmp[:, c] .= mat_memb * coefs_memb_ll[:, c]
+        exp_Xb_share[:, c] .= mat_memb * coefs_memb_ll[:, c]
     end
-    exp_Xb_share = exp.(Xb_share_tmp)
+    exp_Xb_share .= exp.(exp_Xb_share)
 
     # Class shares
     probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
@@ -179,7 +179,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     remap_to_indices_chid!(vec_chid)
     n_chid::Int64 = Base.length(unique(vec_chid))
 
-    probs_memb = Matrix{Real}(undef, nrows, n_classes)
+    probs_memb = Matrix{Float64}(undef, nrows, n_classes)
 
     # Start values
     # TODO seems to ignore start values when using method=:em
@@ -199,18 +199,18 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     cond_probs_memb::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # Class share indices (= membership coefficients? )
-    Xb_share_tmp::Matrix{Real} = zeros(Real, nrows, n_classes)
+    exp_Xb_share::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # matrix of utilities
     exp_mat_utils::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # [1 x nclasses] vector of the likelihood of actual choice sequence
     ProbSeq_n::Matrix{Float64} = zeros(Float64, 1, n_classes)
 
-    ll_n = zeros(Float64, n_id)
+    ll_n::Vector{Float64} = zeros(Float64, n_id)
 
     id_map, chid_map = create_chid_map(vec_chid, vec_id, n_id)
 
     function loglik_obj(theta)
-        return loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
+        return loglik_lc(theta, mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
     end
 
     if method == :em
@@ -251,17 +251,16 @@ function StatsAPI.fit(::Type{LCLmodel},
         end
 
         function cond_probs_ll()
-            # initialise [N_subject x 1] vector of each subject's log-likelihood 
-            # ll_n = zeros(n_id)
-
             # matrix of utilities
             exp_mat_utils .= exp.(mat_X * coefs_mlogit)
 
+            
             for c in 1:(n_classes-1)
-                Xb_share_tmp[:, c] .= mat_memb * coefs_memb[:, c]
+                exp_Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
             end
-
-            exp_Xb_share = exp.(Xb_share_tmp)
+            exp_Xb_share[:, n_classes] .= 0.0
+            
+            exp_Xb_share .= exp.(exp_Xb_share)
 
             # Class shares
             probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
@@ -353,10 +352,6 @@ function StatsAPI.fit(::Type{LCLmodel},
         end
     elseif method == :gradient
 
-        # function loglik_obj(theta)
-        #     return loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
-        # end
-
         # Compute the gradient configuration
         cfg = ForwardDiff.GradientConfig(loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{n_coefficients}())
 
@@ -393,14 +388,14 @@ function StatsAPI.fit(::Type{LCLmodel},
     end
 
     loglik = -DiffResults.value(diffresult)::Float64
-    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
+    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
 
     # shares calculation
     for c in 1:(n_classes-1)
-        Xb_share_tmp[:, c] .= mat_memb * coefs_memb[:, c]
+        exp_Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
     end
 
-    exp_Xb_share = exp.(Xb_share_tmp)
+    exp_Xb_share = exp.(exp_Xb_share)
 
     # Class shares
     probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)

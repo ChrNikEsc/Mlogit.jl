@@ -73,9 +73,13 @@ mlogit(formula, df_mlogit, weights=:weight)
 # lclogit
 df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
 model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
-b_lclogit = @benchmarkable lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), $df_lclogit, 7, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient) seconds=30
-results_lclogit = run(b_lclogit)
-BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_lclogit).allocs) * ".json", median(results_lclogit))
+
+b_lclogit_em = @benchmarkable lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), $df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit) seconds=30
+results_lclogit_em = run(b_lclogit_em)
+
+b_lclogit_grad = @benchmarkable lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), $df_lclogit, 7, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient) seconds=30
+results_lclogit_grad = run(b_lclogit_grad)
+BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_lclogit_grad).allocs) * ".json", median(results_lclogit_grad))
 
 # reportopt_lclogit = @report_opt lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
 # println(reportopt_lclogit)
