@@ -24,34 +24,41 @@ end
 function create_chid_map(vec_chid, vec_id, n_id)
     id_map = Dict(n => findall(==(n), vec_id) for n in 1:n_id)
     chid_map = Dict()
-    
+
     for n in 1:n_id
         idx_n = id_map[n]  # Get indices for this subject
         chid_n = vec_chid[idx_n]  # Extract chid values
         chid_map[n] = Dict(t => findall(==(t), chid_n) for t in unique(chid_n))
     end
-    
+
     return id_map, chid_map
 end
 
-function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64}, 
-                    n_id::Int64, vec_choice::BitVector, n_classes::Int64, 
-                   k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n, 
-                   id_map::Dict, chid_map::Dict)
+function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64},
+    n_id::Int64, vec_choice::BitVector, n_classes::Int64,
+    k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n, exp_mat_utils, exp_Xb_share,
+    id_map::Dict, chid_map::Dict)
 
     # Preallocate memory for log-likelihood
     if eltype(ll_n) ≠ eltype(theta)
         ll_n = zeros(eltype(theta), n_id)
     end
+    if eltype(exp_mat_utils) ≠ eltype(theta)
+        exp_mat_utils = zeros(eltype(theta), size(mat_X, 1), n_classes)
+    end
+    if eltype(exp_Xb_share) ≠ eltype(theta)
+        exp_Xb_share = zeros(eltype(theta), nrows, n_classes)
+    else
+        exp_Xb_share[:, n_classes] .= 0.0
+    end
+
 
     # Reshape coefficients
     mat_coefs_mlogit_ll = reshape(theta[begin:(n_classes*k_utility)], k_utility, n_classes)
-    coefs_memb_ll = reshape(theta[(n_classes * k_utility + 1):end], (k_membership + 1), (n_classes - 1))
+    coefs_memb_ll = reshape(theta[(n_classes*k_utility+1):end], (k_membership + 1), (n_classes - 1))
 
-    # Ensure exp_mat_utils can store Dual numbers
-    exp_mat_utils = zeros(eltype(theta), size(mat_X, 1), n_classes)
-
-    exp_Xb_share = zeros(eltype(theta), nrows, n_classes)
+    # exp_mat_utils = zeros(eltype(theta), size(mat_X, 1), n_classes)
+    # exp_Xb_share = zeros(eltype(theta), nrows, n_classes)
 
     # Efficient matrix multiplication
     mul!(exp_mat_utils, mat_X, mat_coefs_mlogit_ll)
@@ -105,23 +112,79 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
     return -sum(ll_n)
 end
 
+function cond_probs_ll(coefs_mlogit::Matrix{Float64}, coefs_memb::Matrix{Float64}, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64},
+    n_id::Int64, vec_choice::BitVector, n_classes::Int64,
+    ll_n::Vector{Float64}, exp_mat_utils::Matrix{Float64}, exp_Xb_share::Matrix{Float64}, cond_probs_memb::Matrix{Float64}, ProbSeq_n::Matrix{Float64},
+    id_map::Dict, chid_map::Dict, sumll::Vector{Float64}, lcl_H::Matrix{Float64})
+
+    # Compute exponentiated utilities
+    mul!(exp_mat_utils, mat_X, coefs_mlogit)
+    exp_mat_utils .= exp.(exp_mat_utils)
+
+    # Compute membership probabilities
+    @inbounds for c in 1:(n_classes-1)
+        exp_Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
+    end
+    exp_Xb_share[:, n_classes] .= 0.0
+    exp_Xb_share .= exp.(exp_Xb_share)
+
+    # Class shares
+    probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+
+    # Loop over subjects
+    @inbounds for n in 1:n_id
+        idx_n = id_map[n]  # Precomputed indices
+        Y_n = @view vec_choice[idx_n]
+        EXP_n = @view exp_mat_utils[idx_n, :]
+        probs_memb_n = @view probs_memb[idx_n, :]
+
+        # Preallocate for this subject
+        cond_probs_memb_n = zeros(Float64, Base.length(Y_n), n_classes)
+
+        # Get chid mapping for this individual
+        chid_map_n = chid_map[n]
+
+        # Loop over choice sets
+        @inbounds for t in keys(chid_map_n)
+            idx_t = chid_map_n[t]
+            EXP_nt = @view EXP_n[idx_t, :]
+
+            # Fill choice probabilities
+            cond_probs_memb_n[idx_t, :] .= EXP_nt ./ sum(EXP_nt, dims=1)
+        end
+
+        # Compute likelihood
+        ProbSeq_n .= exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1))
+        ll_n[n] = log.(dot(ProbSeq_n, probs_memb_n[1, :]))
+
+        # Compute conditional membership probabilities
+        denom = dot(ProbSeq_n, probs_memb_n[1:1, :]')
+        cond_probs_memb[idx_n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ denom
+    end
+
+    # Store results
+    push!(sumll, sum(ll_n))
+    for x in 1:n_classes
+        lcl_H[:, x] .= cond_probs_memb[:, x]
+    end
+end
 
 
 function StatsAPI.fit(::Type{LCLmodel},
     formula::FormulaTerm,
     df,
     n_classes::Int64;
-    start_memb::Union{Nothing,Matrix{Float64}} = start_memb,
-    start_mnl::Union{Nothing,Matrix{Float64}} = start_mnl,
-    indices::XlogitIndices = xlogit_indices(),
-    method::Symbol = :em,
-    quietly::Bool = false,
-    varname_samplesplit = nothing,
-    max_iter::Int64 = 1000,
-    ltolerance::Float64 = 1e-7,
-    multithreading::Bool = false,
-    optim_method = LBFGS(),
-    optim_options = Optim.options()
+    start_memb::Union{Nothing,Matrix{Float64}}=start_memb,
+    start_mnl::Union{Nothing,Matrix{Float64}}=start_mnl,
+    indices::XlogitIndices=xlogit_indices(),
+    method::Symbol=:em,
+    quietly::Bool=false,
+    varname_samplesplit=nothing,
+    max_iter::Int64=1000,
+    ltolerance::Float64=1e-7,
+    multithreading::Bool=false,
+    optim_method=LBFGS(),
+    optim_options=Optim.options()
 )
     # start time
     start_time = time()
@@ -165,7 +228,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     vec_id::Vector{Int64} = Vector{Int64}(df.id)
     n_id::Int64 = Base.length(unique(vec_id))
-    n_coefficients = (k_membership+1)*(n_classes-1) + k_utility*n_classes
+    n_coefficients = (k_membership + 1) * (n_classes - 1) + k_utility * n_classes
 
     # for changing to array-based code
     lcl_first_by_id::BitVector = let seen = Set()
@@ -210,28 +273,26 @@ function StatsAPI.fit(::Type{LCLmodel},
     id_map, chid_map = create_chid_map(vec_chid, vec_id, n_id)
 
     function loglik_obj(theta)
-        return loglik_lc(theta, mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
+        return loglik_lc(theta, mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, exp_mat_utils, exp_Xb_share, id_map, chid_map)
     end
 
     if method == :em
 
         ### split sample
 
-        prop = 1 / n_classes
-
-        function create_lcl_s(vec_id, lcl_first_by_id, n_classes, prop)
+        function create_lcl_s(vec_id, n_classes)
             # Get unique IDs and their first positions
             unique_ids = unique(vec_id)
-            # first_positions = findall(true, lcl_first_by_id)
-            
+            prop = 1/n_classes
+
             # Assign random class probabilities to each ID
-            id_to_class = Dict{eltype(vec_id), Int}()
+            id_to_class = Dict{eltype(vec_id),Int}()
             for id in unique_ids
                 rand_val = rand(Uniform())
                 class = findfirst(>(rand_val), cumsum(repeat([prop], n_classes)))
                 id_to_class[id] = isnothing(class) ? n_classes : class
             end
-            
+
             # Expand to full vector
             [id_to_class[id] for id in vec_id]
         end
@@ -239,68 +300,21 @@ function StatsAPI.fit(::Type{LCLmodel},
         lcl_s::Vector{Float64} = if !isnothing(varname_samplesplit)
             df[!, Symbol(varname_samplesplit)]
         else
-            create_lcl_s(vec_id, lcl_first_by_id, n_classes, prop)
+            create_lcl_s(vec_id, n_classes)
         end
 
         lcl_H::Matrix{Float64} = Matrix(undef, nrows, n_classes)
 
-        sumll = Float64[]
+        sumll::Vector{Float64} = Float64[]
 
         for s in 1:n_classes
-            coefs_mlogit[:, s] .= coef(mlogit(formula, df[lcl_s .== s, :]))
+            coefs_mlogit[:, s] .= coef(mlogit(formula, df[lcl_s.==s, :]))
         end
 
-        function cond_probs_ll()
-            # matrix of utilities
-            exp_mat_utils .= exp.(mat_X * coefs_mlogit)
-
-            
-            for c in 1:(n_classes-1)
-                exp_Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
-            end
-            exp_Xb_share[:, n_classes] .= 0.0
-            
-            exp_Xb_share .= exp.(exp_Xb_share)
-
-            # Class shares
-            probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
-
-            # loop over subjects
-            for n in unique(vec_id)
-                # read in data rows pertaining to subject n & store in a matrix suffixed _n
-                Y_n = vec_choice[vec_id.==n]
-                EXP_n = exp_mat_utils[vec_id.==n, :]
-                probs_memb_n = probs_memb[vec_id.==n, :]
-                chid_n = vec_chid[vec_id.==n]
-
-                # initialise [N_n x nclasses] matrix of conditional choice probabilities where N_n is # of data rows for subject n
-                cond_probs_memb_n = zeros(Base.length(Y_n), n_classes)
-
-                # loop over choice sets t
-                for t in unique(chid_n)
-                    # read in data rows pertaining to choice set t
-                    EXP_nt = EXP_n[chid_n.==t, :]
-
-                    # fill in choice probabilities	
-                    cond_probs_memb_n[chid_n.==t, :] .= EXP_nt ./ sum(EXP_nt, dims=1) #colsum
-                end
-
-                # [1 x nclasses] vector of the likelihood of actual choice sequence
-                ProbSeq_n .= exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1)) #colsum
-
-                # compute subject n's log-likelihood
-                ll_n[n] = log.(ProbSeq_n * probs_memb_n[1, :])[1, 1]
-
-                # fill in subject n's conditional membership probabilities
-                cond_probs_memb[vec_id.==n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ (ProbSeq_n * probs_memb_n[1:1, :]')
-            end
-            push!(sumll, sum(ll_n))
-            for x in 1:n_classes
-                lcl_H[:, x] .= cond_probs_memb[:, x]
-            end
-        end
-
-        cond_probs_ll()
+        cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
+            n_id, vec_choice, n_classes,
+            ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
+            id_map, chid_map, sumll, lcl_H)
 
         quietly || println("Iteration 0 - Log likelihood: $(last(sumll))")
 
@@ -331,10 +345,13 @@ function StatsAPI.fit(::Type{LCLmodel},
                 coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
             else
                 opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), 1, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
-                coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes-1)
+                coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes - 1)
             end
 
-            cond_probs_ll()
+            cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
+            n_id, vec_choice, n_classes,
+            ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
+            id_map, chid_map, sumll, lcl_H)
 
             quietly || println("Iteration $iter - Log likelihood: $(last(sumll))")
 
@@ -388,7 +405,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     end
 
     loglik = -DiffResults.value(diffresult)::Float64
-    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
+    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, exp_mat_utils, exp_Xb_share, id_map, chid_map)
 
     # shares calculation
     for c in 1:(n_classes-1)
@@ -419,7 +436,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         nclasses=n_classes,
         nids=n_id,
         nullloglikelihood=loglik_0,
-        optim= (@isdefined opt) ? opt : nothing,
+        optim=(@isdefined opt) ? opt : nothing,
         responsename=response_name,
         score=nothing,
         shares=shares,
