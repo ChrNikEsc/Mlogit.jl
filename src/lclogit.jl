@@ -20,10 +20,26 @@ function lclogit(
     StatsAPI.fit(LCLmodel, formula, df, n_classes; start_memb=start_memb, start_mnl=start_mnl, indices=indices, method=method, quietly=quietly, varname_samplesplit=varname_samplesplit, max_iter=max_iter, ltolerance=ltolerance, multithreading=multithreading, optim_method=optim_method, optim_options=optim_options)
 end
 
+# Function to compute chid_map
+function create_chid_map(vec_chid, vec_id, n_id)
+    id_map = Dict(n => findall(==(n), vec_id) for n in 1:n_id)
+    chid_map = Dict()
+    
+    for n in 1:n_id
+        idx_n = id_map[n]  # Get indices for this subject
+        chid_n = vec_chid[idx_n]  # Extract chid values
+        chid_map[n] = Dict(t => findall(==(t), chid_n) for t in unique(chid_n))
+    end
+    
+    return id_map, chid_map
+end
+
+# Updated function with chid_map passed as an argument
 function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64}, 
-                   Xb_share_tmp::Matrix{Real}, vec_id::Vector{Int64}, n_id::Int64, 
-                   vec_chid::Vector{Int64}, vec_choice::BitVector, n_classes::Int64, 
-                   k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n)
+                   Xb_share_tmp::Matrix{Real}, n_id::Int64, 
+                   vec_choice::BitVector, n_classes::Int64, 
+                   k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n, 
+                   id_map::Dict, chid_map::Dict)
 
     # Preallocate memory for log-likelihood
     if eltype(ll_n) ≠ eltype(theta)
@@ -43,7 +59,6 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
     # Element-wise exponentiation (preserving Dual types)
     exp_mat_utils .= exp.(exp_mat_utils)
 
-
     # Compute membership probabilities efficiently
     @inbounds for c in 1:(n_classes-1)
         Xb_share_tmp[:, c] .= mat_memb * coefs_memb_ll[:, c]
@@ -56,26 +71,22 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
     # Preallocate for conditional probabilities
     cond_probs_memb = zeros(eltype(theta), nrows, n_classes)
 
-    # Precompute unique vec_id indices to avoid repeated filtering
-    id_map = Dict(n => findall(==(n), vec_id) for n in 1:n_id)
-
     # Loop over subjects
     @inbounds for n in 1:n_id
         idx_n = id_map[n]  # Precomputed indices
         Y_n = @view vec_choice[idx_n]
         EXP_n = @view exp_mat_utils[idx_n, :]
         probs_memb_n = @view probs_memb[idx_n, :]
-        chid_n = @view vec_chid[idx_n]
 
         # Preallocate for this subject
         cond_probs_memb_n = zeros(eltype(theta), Base.length(Y_n), n_classes)
 
-        # Precompute unique chid indices for efficiency
-        chid_map = Dict(t => findall(==(t), chid_n) for t in unique(chid_n))
+        # Get chid mapping for this individual
+        chid_map_n = chid_map[n]
 
         # Loop over choice sets t
-        @inbounds for t in keys(chid_map)
-            idx_t = chid_map[t]
+        @inbounds for t in keys(chid_map_n)
+            idx_t = chid_map_n[t]
             EXP_nt = @view EXP_n[idx_t, :]
 
             # Fill choice probabilities
@@ -93,6 +104,7 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
 
     return -sum(ll_n)
 end
+
 
 
 function StatsAPI.fit(::Type{LCLmodel},
@@ -165,7 +177,6 @@ function StatsAPI.fit(::Type{LCLmodel},
     # make sure that vec_chid can be used to index vectors of length length(unique(vec_chid))
     # unique(vec_chid) != 1:length(unique(vec_chid)) && 
     remap_to_indices_chid!(vec_chid)
-    # idx_map = create_index_map(vec_chid)
     n_chid::Int64 = Base.length(unique(vec_chid))
 
     probs_memb = Matrix{Real}(undef, nrows, n_classes)
@@ -196,8 +207,10 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     ll_n = zeros(Float64, n_id)
 
+    id_map, chid_map = create_chid_map(vec_chid, vec_id, n_id)
+
     function loglik_obj(theta)
-        return loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
+        return loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
     end
 
     if method == :em
@@ -380,7 +393,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     end
 
     loglik = -DiffResults.value(diffresult)::Float64
-    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
+    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, id_map, chid_map)
 
     # shares calculation
     for c in 1:(n_classes-1)
