@@ -5,10 +5,12 @@ using DataFrames, Pipe#, BenchmarkTools, Profile
 using Reexport
 @reexport using StatsModels
 
-using StatsBase, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Distributions, Makie, CairoMakie, Combinatorics
+using StatsBase, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Distributions, Combinatorics
+using Makie, CairoMakie, ColorSchemes
 using StaticArrays
 using Optim, Distributions, LineSearches
 using ForwardDiff
+using DiffResults
 using FiniteDifferences
 using LinearAlgebra: diag, dot, mul!
 # using NamedArrays # used to be in fmlogit.jl but might no longer be necessary
