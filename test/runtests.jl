@@ -27,27 +27,27 @@ const mlogit_datadir = joinpath(dirname(@__FILE__), "..", "data/")
 # lclogit
 df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
 
-# @testset "Mlogit.jl" begin
-#     # mlogit
-#     model_mlogit = mlogit(
-#         @formula(choice ~ pf + cl + loc + wk + tod + seas),
-#         df_mlogit,
-#         weights=:weight
-#     )
+@testset "Mlogit.jl" begin
+    # mlogit
+    model_mlogit = mlogit(
+        @formula(choice ~ pf + cl + loc + wk + tod + seas),
+        df_mlogit,
+        weights=:weight
+    )
 
-#     @test sum(model_mlogit.coef) ≈ -10.368346014522867
+    @test sum(model_mlogit.coef) ≈ -10.368346014522867
 
-#     # nlogit
-#     model_nlogit = mlogit(
-#         @formula(choice ~ ich + och + icca + occa + inc_room + inc_cooling + int_cooling + nests(nest)),
-#         HCdata,
-#         equal_lambdas=false
-#     )
+    # nlogit
+    model_nlogit = mlogit(
+        @formula(choice ~ ich + och + icca + occa + inc_room + inc_cooling + int_cooling + nests(nest)),
+        HCdata,
+        equal_lambdas=false
+    )
 
-#     @test round(sum(model_nlogit.coef), digits=3) ≈ -7.895 # This seems to be relatively unstable
+    @test round(sum(model_nlogit.coef), digits=3) ≈ -7.895 # This seems to be relatively unstable
     
-    # # fmlogit
-    # model_fmlogit = fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=true)
+    # fmlogit
+    model_fmlogit = fmlogit(@formula(y1 + y2 + y3 + y4 ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8), df_fmlogit, multithreading=true)
 
     # lclogit
     model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
@@ -55,8 +55,9 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
     
     model_lclogit_grad = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient)
     @test model_lclogit_grad.loglikelihood ≈ -1006.3534820949649
-# end
+end
 
 
 
-
+# Mlogit.regtable(model_lclogit_grad)
+# Mlogit.coefplot(model_lclogit_grad)

@@ -184,14 +184,14 @@ function RegressionTables.regtable(
     nclasses = rrs.nclasses
 
     coefnames_mnl = rrs.coefnames_mnl
-    n_coef_mnl = length(coefnames_mnl)
+    n_coef_mnl = Base.length(coefnames_mnl)
     coefvalues_mnl = reshape([RegressionTables.CoefValue(rrs, i) for i in 1:(n_coef_mnl*nclasses)], n_coef_mnl, nclasses)
     coefvalues_mnl = RegressionTables.repr.(render, coefvalues_mnl)
     coefbelow_mnl = reshape([RegressionTables.StdError(rrs, i) for i in 1:(n_coef_mnl*nclasses)], n_coef_mnl, nclasses)
     coefbelow_mnl = RegressionTables.repr.(render, coefbelow_mnl)
 
     coefnames_memb = rrs.coefnames_memb
-    n_coef_memb = length(coefnames_memb)
+    n_coef_memb = Base.length(coefnames_memb)
     coefvalues_memb = reshape([RegressionTables.CoefValue(rrs, i) for i in (n_coef_mnl*nclasses+1):dof(rrs)], n_coef_memb, nclasses - 1)
     coefvalues_memb = RegressionTables.repr.(render, coefvalues_memb)
     coefbelow_memb = reshape([RegressionTables.StdError(rrs, i) for i in (n_coef_mnl*nclasses+1):dof(rrs)], n_coef_memb, nclasses - 1)
@@ -305,9 +305,9 @@ function lclmodel_data(model::LCLmodel; level=0.95)
 
     df = DataFrame(
         row=1:dof(model),
-        model=[repeat([:mnl], length(model.coefnames_mnl) * model.nclasses); repeat([:memb], length(model.coefnames_memb) * (model.nclasses - 1))],
+        model=[repeat([:mnl], Base.length(model.coefnames_mnl) * model.nclasses); repeat([:memb], Base.length(model.coefnames_memb) * (model.nclasses - 1))],
         coefname=[repeat(model.coefnames_mnl, outer=model.nclasses); repeat(model.coefnames_memb, outer=model.nclasses - 1)],
-        class=[repeat(1:model.nclasses, inner=length(model.coefnames_mnl)); repeat(1:(model.nclasses-1), inner=length(model.coefnames_memb))],
+        class=[repeat(1:model.nclasses, inner=Base.length(model.coefnames_mnl)); repeat(1:(model.nclasses-1), inner=Base.length(model.coefnames_memb))],
         coef=coef(model),
         ci_lo=ci[:, 1],
         ci_hi=ci[:, 2]
@@ -333,8 +333,8 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
     data_memb = subset(model_data, :model => x -> x .== :memb)
 
     nclasses = model.nclasses
-    nmnlcoef = length(model.coefnames_mnl)
-    nmembcoef = length(model.coefnames_memb)
+    nmnlcoef = Base.length(model.coefnames_mnl)
+    nmembcoef = Base.length(model.coefnames_memb)
 
 
     fig = Figure(size=size)
