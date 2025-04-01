@@ -26,7 +26,6 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
                    k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n)
 
     # Preallocate memory for log-likelihood
-    # ll_n = zeros(eltype(theta), n_id)
     if eltype(ll_n) ≠ eltype(theta)
         ll_n = zeros(eltype(theta), n_id)
     end
@@ -109,7 +108,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     max_iter::Int64 = 1000,
     ltolerance::Float64 = 1e-7,
     multithreading::Bool = false,
-    optim_method = BFGS(),
+    optim_method = LBFGS(),
     optim_options = Optim.options()
 )
     # start time
@@ -196,6 +195,10 @@ function StatsAPI.fit(::Type{LCLmodel},
     ProbSeq_n::Matrix{Float64} = zeros(Float64, 1, n_classes)
 
     ll_n = zeros(Float64, n_id)
+
+    function loglik_obj(theta)
+        return loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
+    end
 
     if method == :em
 
@@ -315,7 +318,7 @@ function StatsAPI.fit(::Type{LCLmodel},
                 Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
                 coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
             else
-                opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), 1, n_classes), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
+                opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), 1, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
                 coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes-1)
             end
 
@@ -335,13 +338,11 @@ function StatsAPI.fit(::Type{LCLmodel},
             # If not converged, restart loop
             iter += 1
         end
-        
-        loglik = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)::Float64
     elseif method == :gradient
 
-        function loglik_obj(theta)
-            return loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
-        end
+        # function loglik_obj(theta)
+        #     return loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
+        # end
 
         # Compute the gradient configuration
         cfg = ForwardDiff.GradientConfig(loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{n_coefficients}())
@@ -367,13 +368,17 @@ function StatsAPI.fit(::Type{LCLmodel},
         error("Unknown method. Choose :em or :gradient")
     end
 
-
     diffresult = DiffResults.HessianResult([vec(coefs_mlogit); vec(coefs_memb)])
-    diffresult = ForwardDiff.hessian!(diffresult, theta -> loglik_lc(theta, mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n), [vec(coefs_mlogit); vec(coefs_memb)]);
+    cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{n_coefficients}())
+    diffresult = ForwardDiff.hessian!(diffresult, loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], cfgH)
 
     gradient = DiffResults.gradient(diffresult)::Vector{Float64}
     hessian = DiffResults.hessian(diffresult)::Matrix{Float64}
     vcov = inv(hessian)
+    if any(diag(vcov) .< 0.0)
+        @warn "Main diagonale of VCOV has negative entries. Try gradient-based optimization."
+    end
+
     loglik = -DiffResults.value(diffresult)::Float64
     loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, Xb_share_tmp, vec_id, n_id, vec_chid, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n)
 
@@ -389,10 +394,8 @@ function StatsAPI.fit(::Type{LCLmodel},
     shares::Vector{Float64} = vec(mean(probs_memb[lcl_first_by_id, :], dims=1))
 
     r = LCLmodel(
-        # coef=coefficients,
         coef_memb=coefs_memb,
         coef_mnl=coefs_mlogit,
-        # coefnames=coefnames,
         coefnames_memb=isempty(coefnames_membership) ? ["constant";] : [coefnames_membership; "constant"],
         coefnames_mnl=coefnames_utility,
         converged=converged,
@@ -400,12 +403,10 @@ function StatsAPI.fit(::Type{LCLmodel},
         formula=formula,
         formula_origin=formula_origin,
         formula_schema=formula_schema,
-        hessian=(@isdefined hessian) ? hessian : fill(0.0, n_coefficients, n_coefficients),
+        hessian=hessian,
         iter=iter,
         loglikelihood=loglik,
         method=method,
-        # model_membership=model_memb,
-        # models_mnl=models_mnl,
         nchids=n_chid,
         nclasses=n_classes,
         nids=n_id,
@@ -417,7 +418,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         start=zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)),
         startloglikelihood=loglik_0,
         time=time() - start_time,
-        vcov=(@isdefined vcov) ? vcov : fill(0.0, n_coefficients, n_coefficients)
+        vcov=vcov
     )
     return r
 end

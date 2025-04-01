@@ -95,7 +95,7 @@ function fmlogit(
     return r
 end;
 
-function loglik_fmlogit(theta, y, X, vec_weights, k, j)
+function loglik_fmlogit(theta, y, X, vec_weights, k, j; multithreading=false)
     betamat = [transpose(reshape(theta, k + 1, j - 1)); zeros(k + 1)']
     L = zeros(eltype(theta), j)
 
@@ -107,15 +107,15 @@ function loglik_fmlogit(theta, y, X, vec_weights, k, j)
         return sum(view(y, :, i) .* (view(X_betamat, :, i) - log_sum_exp_Xb))
     end
 
-    # if multithreading
-    #     Threads.@threads for i in 1:j
-    #         L[i] = call_L(i) * vec_weights[i]
-    #     end
-    # else
+    if multithreading
+        Threads.@threads for i in 1:j
+            L[i] = call_L(i) * vec_weights[i]
+        end
+    else
         for i in 1:j
             L[i] = call_L(i) * vec_weights[i]
         end
-    # end
+    end
 
     return -sum(L)
 end
