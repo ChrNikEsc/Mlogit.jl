@@ -29,6 +29,7 @@ export lclmodel
 export lclogit
 export membership
 export robust_cluster_vcov
+export coefplot
 
 include("utils.jl")
 
