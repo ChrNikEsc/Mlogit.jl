@@ -28,6 +28,7 @@ export fmlogit
 export lclmodel
 export lclogit
 export membership
+export robust_cluster_vcov
 
 include("utils.jl")
 
