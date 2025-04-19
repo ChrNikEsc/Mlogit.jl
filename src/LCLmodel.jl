@@ -71,8 +71,8 @@ StatsBase.bic(model::LCLmodel) = -2 * loglikelihood(model) + dof(model) * log(no
 caic(model::LCLmodel) = -2 * loglikelihood(model) + dof(model) * (log(nobs(model)) + 1)
 StatsBase.coef(model::LCLmodel) = [vec(model.coef_mnl); vec(model.coef_memb)]
 StatsBase.coefnames(model::LCLmodel) = vcat(
-    vec([model.coefnames_mnl[i] * " _" * string.(c) for i in 1:length(model.coefnames_mnl), c in 1:model.nclasses]),
-    vec([model.coefnames_memb[i] * " _" * string.(c) for i in 1:length(model.coefnames_memb), c in 1:(model.nclasses-1)])
+    vec([model.coefnames_mnl[i] * " _" * string.(c) for i in 1:Base.length(model.coefnames_mnl), c in 1:model.nclasses]),
+    vec([model.coefnames_memb[i] * " _" * string.(c) for i in 1:Base.length(model.coefnames_memb), c in 1:(model.nclasses-1)])
 )
 function confint(model::LCLmodel; level::Real=0.95)
     hcat(coef(model), coef(model)) + stderror(model) * quantile(Normal(), (1.0 - level) / 2.0) * [1.0 -1.0]
@@ -169,7 +169,7 @@ stats_LCLmodel = (:N => Int ∘ nobs, "McFadden \$R^2\$" => r2, "LL" => loglikel
 #     # Add more details as needed
 # end
 
-length(rrs::LCLmodel) = 1
+Base.length(rrs::LCLmodel) = 1
 function RegressionTables.regtable(
     rrs::LCLmodel;
     renderSettings=nothing,
