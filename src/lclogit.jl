@@ -394,7 +394,9 @@ function StatsAPI.fit(::Type{LCLmodel},
     end
 
     diffresult = DiffResults.HessianResult([vec(coefs_mlogit); vec(coefs_memb)])
-    cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{18}())
+    # TODO this chunksize calculation is not necessarily optimal. n_coefficients is definitely worse, however
+    chunksizeH::Int64 = ceil(sqrt(n_coefficients))
+    cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{chunksizeH}())
     diffresult = ForwardDiff.hessian!(diffresult, loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], cfgH)
 
     gradient = DiffResults.gradient(diffresult)::Vector{Float64}
