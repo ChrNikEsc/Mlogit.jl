@@ -21,6 +21,8 @@ using Printf
 
 # import Base.length # used to be in lclogit.jl but might no longer be necessary
 
+export MNLmodel
+export LCLmodel
 
 export mlogit
 export nests
