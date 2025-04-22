@@ -184,7 +184,8 @@ function StatsAPI.fit(::Type{LCLmodel},
     ltolerance::Float64=1e-7,
     multithreading::Bool=false,
     optim_method=LBFGS(),
-    optim_options=Optim.options()
+    optim_options=Optim.options(),
+    max_retries::Int=5 # to be used if, e.g., the Hessian after the EM algorithm cannot be inverted
 )
     # start time
     start_time = time()
@@ -276,132 +277,149 @@ function StatsAPI.fit(::Type{LCLmodel},
         return loglik_lc(theta, mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, exp_mat_utils, exp_Xb_share, id_map, chid_map)
     end
 
-    if method == :em
+    # set up objects to be defined inside the while restarted loop
+    hessian = Matrix{Float64}(undef, n_coefficients, n_coefficients)
+    vcov = Matrix{Float64}(undef, n_coefficients, n_coefficients)
+    diffresult = DiffResults.HessianResult([vec(coefs_mlogit); vec(coefs_memb)])
+    iter = 1 # for inner EM algorithm loop
+    converged = false
 
-        ### split sample
+    restarted = true # for restart in case of infs/NaN in Hessian (or other problems)
+    retry_count = 0
+    while restarted && retry_count < max_retries
+        restarted = false
 
-        function create_lcl_s(vec_id, n_classes)
-            # Get unique IDs and their first positions
-            unique_ids = unique(vec_id)
-            prop = 1/n_classes
+        if method == :em
 
-            # Assign random class probabilities to each ID
-            id_to_class = Dict{eltype(vec_id),Int}()
-            for id in unique_ids
-                rand_val = rand(Uniform())
-                class = findfirst(>(rand_val), cumsum(repeat([prop], n_classes)))
-                id_to_class[id] = isnothing(class) ? n_classes : class
+            ### split sample
+
+            function create_lcl_s(vec_id, n_classes)
+                # Get unique IDs and their first positions
+                unique_ids = unique(vec_id)
+                prop = 1 / n_classes
+
+                # Assign random class probabilities to each ID
+                id_to_class = Dict{eltype(vec_id),Int}()
+                for id in unique_ids
+                    rand_val = rand(Uniform())
+                    class = findfirst(>(rand_val), cumsum(repeat([prop], n_classes)))
+                    id_to_class[id] = isnothing(class) ? n_classes : class
+                end
+
+                # Expand to full vector
+                [id_to_class[id] for id in vec_id]
             end
 
-            # Expand to full vector
-            [id_to_class[id] for id in vec_id]
-        end
-
-        lcl_s::Vector{Float64} = if !isnothing(varname_samplesplit)
-            df[!, Symbol(varname_samplesplit)]
-        else
-            create_lcl_s(vec_id, n_classes)
-        end
-
-        lcl_H::Matrix{Float64} = Matrix(undef, nrows, n_classes)
-
-        sumll::Vector{Float64} = Float64[]
-
-        for s in 1:n_classes
-            coefs_mlogit[:, s] .= coef(mlogit(formula, df[lcl_s.==s, :]))
-        end
-
-        cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
-            n_id, vec_choice, n_classes,
-            ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
-            id_map, chid_map, sumll, lcl_H)
-
-        quietly || println("Iteration 0 - Log likelihood: $(last(sumll))")
-
-        ### Loop
-
-        iter = 1
-        converged = false
-        llincrease = 9999.9
-
-        while iter <= max_iter
-            call_mlogit_coef(s) = fit_mlogit(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, lcl_H[:, s][vec_choice])
-            # Update the probability of the agent's sequence of choices
-            if multithreading
-                Threads.@threads for s in 1:n_classes
-                    _, coefficients_scaled, _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
-                    coefs_mlogit[:, s] .= coefficients_scaled
-                end
+            lcl_s::Vector{Float64} = if !isnothing(varname_samplesplit)
+                df[!, Symbol(varname_samplesplit)]
             else
-                for s in 1:n_classes
-                    _, coefficients_scaled, _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
-                    coefs_mlogit[:, s] .= coefficients_scaled
-                end
+                create_lcl_s(vec_id, n_classes)
             end
 
-            # Update the class share probabilities
-            if k_membership == 0
-                Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
-                coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
-            else
-                opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), 1, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
-                coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes - 1)
+            lcl_H::Matrix{Float64} = Matrix(undef, nrows, n_classes)
+
+            sumll::Vector{Float64} = Float64[]
+
+            for s in 1:n_classes
+                coefs_mlogit[:, s] .= coef(mlogit(formula, df[lcl_s.==s, :]))
             end
 
             cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
-            n_id, vec_choice, n_classes,
-            ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
-            id_map, chid_map, sumll, lcl_H)
+                n_id, vec_choice, n_classes,
+                ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
+                id_map, chid_map, sumll, lcl_H)
 
-            quietly || println("Iteration $iter - Log likelihood: $(last(sumll))")
+            quietly || println("Iteration 0 - Log likelihood: $(last(sumll))")
 
-            # Check for convergence
-            if iter >= 6
-                llincrease = -(sumll[iter] - sumll[iter-5]) / sumll[iter-5]
-                if llincrease <= ltolerance
-                    converged = true
-                    break
+            ### Loop
+            llincrease = 9999.9
+
+            while iter <= max_iter
+                call_mlogit_coef(s) = fit_mlogit(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, lcl_H[:, s][vec_choice])
+                # Update the probability of the agent's sequence of choices
+                if multithreading
+                    Threads.@threads for s in 1:n_classes
+                        _, coefficients_scaled, _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
+                        coefs_mlogit[:, s] .= coefficients_scaled
+                    end
+                else
+                    for s in 1:n_classes
+                        _, coefficients_scaled, _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
+                        coefs_mlogit[:, s] .= coefficients_scaled
+                    end
                 end
+
+                # Update the class share probabilities
+                if k_membership == 0
+                    Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
+                    coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
+                else
+                    opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, lcl_H[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), 1, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
+                    coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes - 1)
+                end
+
+                cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
+                    n_id, vec_choice, n_classes,
+                    ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
+                    id_map, chid_map, sumll, lcl_H)
+
+                quietly || println("Iteration $iter - Log likelihood: $(last(sumll))")
+
+                # Check for convergence
+                if iter >= 6
+                    llincrease = -(sumll[iter] - sumll[iter-5]) / sumll[iter-5]
+                    if llincrease <= ltolerance
+                        converged = true
+                        break
+                    end
+                end
+
+                # If not converged, restart loop
+                iter += 1
+            end
+        elseif method == :gradient
+
+            # Compute the gradient configuration
+            cfg = ForwardDiff.GradientConfig(loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{n_coefficients}())
+
+            # Define the gradient function
+            function loglik_grad!(G, theta)
+                ForwardDiff.gradient!(G, loglik_obj, theta, cfg)
             end
 
-            # If not converged, restart loop
-            iter += 1
+            # Wrap function and gradient in OnceDifferentiable
+            fdf = Optim.OnceDifferentiable(loglik_obj, loglik_grad!, [vec(coefs_mlogit); vec(coefs_memb)])
+
+            # Run optimization
+            opt = Optim.optimize(fdf, [vec(coefs_mlogit); vec(coefs_memb)], optim_method, optim_options)
+
+            coefficients = Optim.minimizer(opt)
+            coefs_mlogit .= reshape(coefficients[1:(k_utility*n_classes)], k_utility, n_classes)
+            coefs_memb .= reshape(coefficients[(k_utility*n_classes+1):end], (k_membership + 1), (n_classes - 1))
+
+            converged = Optim.converged(opt)
+            iter = Optim.iterations(opt)
+        else
+            error("Unknown method. Choose :em or :gradient")
         end
-    elseif method == :gradient
 
-        # Compute the gradient configuration
-        cfg = ForwardDiff.GradientConfig(loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{n_coefficients}())
+        
+        # TODO this chunksize calculation is not necessarily optimal. n_coefficients is definitely worse, however
+        chunksizeH::Int64 = ceil(sqrt(n_coefficients))
+        cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{chunksizeH}())
+        diffresult = ForwardDiff.hessian!(diffresult, loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], cfgH)
 
-        # Define the gradient function
-        function loglik_grad!(G, theta)
-            ForwardDiff.gradient!(G, loglik_obj, theta, cfg)
+        gradient = DiffResults.gradient(diffresult)::Vector{Float64}
+        hessian = DiffResults.hessian(diffresult)::Matrix{Float64}
+
+        try
+            vcov = inv(hessian)
+        catch
+            @warn "Hessian could not be inverted, likely because matrix contains Infs or NaNs. Restarting.."
+            restarted = true
         end
+    end # end while restarted
 
-        # Wrap function and gradient in OnceDifferentiable
-        fdf = Optim.OnceDifferentiable(loglik_obj, loglik_grad!, [vec(coefs_mlogit); vec(coefs_memb)])
-
-        # Run optimization
-        opt = Optim.optimize(fdf, [vec(coefs_mlogit); vec(coefs_memb)], optim_method, optim_options)
-
-        coefficients = Optim.minimizer(opt)
-        coefs_mlogit .= reshape(coefficients[1:(k_utility*n_classes)], k_utility, n_classes)
-        coefs_memb .= reshape(coefficients[(k_utility*n_classes+1):end], (k_membership + 1), (n_classes - 1))
-
-        converged = Optim.converged(opt)
-        iter = Optim.iterations(opt)
-    else
-        error("Unknown method. Choose :em or :gradient")
-    end
-
-    diffresult = DiffResults.HessianResult([vec(coefs_mlogit); vec(coefs_memb)])
-    # TODO this chunksize calculation is not necessarily optimal. n_coefficients is definitely worse, however
-    chunksizeH::Int64 = ceil(sqrt(n_coefficients))
-    cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{chunksizeH}())
-    diffresult = ForwardDiff.hessian!(diffresult, loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], cfgH)
-
-    gradient = DiffResults.gradient(diffresult)::Vector{Float64}
-    hessian = DiffResults.hessian(diffresult)::Matrix{Float64}
-    vcov = inv(hessian)
     if any(diag(vcov) .< 0.0)
         @warn "Main diagonale of VCOV has negative entries. Try gradient-based optimization."
     end
