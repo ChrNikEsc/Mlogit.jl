@@ -291,6 +291,8 @@ function StatsAPI.fit(::Type{LCLmodel},
 
         if method == :em
 
+            iter = 1 # for inner EM algorithm loop
+
             ### split sample
 
             function create_lcl_s(vec_id, n_classes)
