@@ -14,10 +14,12 @@ function lclogit(
     multithreading::Bool=false, # appears to be only beneficial for high numbers of classes due to overhead
     # relevant for gradient
     optim_method=BFGS(),
-    optim_options=Optim.Options()
+    optim_options=Optim.Options(),
+    max_retries::Int=5, # to be used if, e.g., the Hessian after the EM algorithm cannot be inverted,
+    chunksize_func = (n) -> ceil(Int, sqrt(n))
 )
 
-    StatsAPI.fit(LCLmodel, formula, df, n_classes; start_memb=start_memb, start_mnl=start_mnl, indices=indices, method=method, quietly=quietly, varname_samplesplit=varname_samplesplit, max_iter=max_iter, ltolerance=ltolerance, multithreading=multithreading, optim_method=optim_method, optim_options=optim_options)
+    StatsAPI.fit(LCLmodel, formula, df, n_classes, start_memb, start_mnl, indices, method, quietly, varname_samplesplit, max_iter, ltolerance, multithreading, optim_method, optim_options, max_retries, chunksize_func)
 end
 
 # Function to compute chid_map
@@ -173,19 +175,20 @@ end
 function StatsAPI.fit(::Type{LCLmodel},
     formula::FormulaTerm,
     df,
-    n_classes::Int64;
-    start_memb::Union{Nothing,Matrix{Float64}}=start_memb,
-    start_mnl::Union{Nothing,Matrix{Float64}}=start_mnl,
-    indices::XlogitIndices=xlogit_indices(),
-    method::Symbol=:em,
-    quietly::Bool=false,
-    varname_samplesplit=nothing,
-    max_iter::Int64=1000,
-    ltolerance::Float64=1e-7,
-    multithreading::Bool=false,
-    optim_method=LBFGS(),
-    optim_options=Optim.options(),
-    max_retries::Int=5 # to be used if, e.g., the Hessian after the EM algorithm cannot be inverted
+    n_classes::Int64,
+    start_memb::Union{Nothing,Matrix{Float64}},
+    start_mnl::Union{Nothing,Matrix{Float64}},
+    indices::XlogitIndices,
+    method::Symbol,
+    quietly::Bool,
+    varname_samplesplit,
+    max_iter::Int64,
+    ltolerance::Float64,
+    multithreading::Bool,
+    optim_method,
+    optim_options,
+    max_retries::Int,
+    chunksize_func
 )
     # start time
     start_time = time()
@@ -407,7 +410,8 @@ function StatsAPI.fit(::Type{LCLmodel},
 
         
         # TODO this chunksize calculation is not necessarily optimal. n_coefficients is definitely worse, however
-        chunksizeH::Int64 = ceil(sqrt(n_coefficients))
+        chunksizeH::Int64 = chunksize_func(n_coefficients)
+        quietly || println("Starting Hessian calculation with $n_coefficients coefficients and a chunksize of $chunksizeH.")
         cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{chunksizeH}())
         diffresult = ForwardDiff.hessian!(diffresult, loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], cfgH)
 
