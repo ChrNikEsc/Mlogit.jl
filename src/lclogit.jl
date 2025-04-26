@@ -9,7 +9,7 @@ function lclogit(
     quietly::Bool=false,
     # relevant for em
     varname_samplesplit=nothing,
-    max_iter::Int64=1000,
+    max_iter::Int64=300,
     ltolerance::Float64=1e-6,
     multithreading::Bool=false, # appears to be only beneficial for high numbers of classes due to overhead
     # relevant for gradient
