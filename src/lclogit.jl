@@ -9,14 +9,14 @@ function lclogit(
     quietly::Bool=false,
     # relevant for em
     varname_samplesplit=nothing,
-    max_iter::Int64=300,
-    ltolerance::Float64=1e-6,
+    max_iter::Int64=1000,
+    ltolerance::Float64=1e-7,
     multithreading::Bool=false, # appears to be only beneficial for high numbers of classes due to overhead
     # relevant for gradient
     optim_method=BFGS(),
     optim_options=Optim.Options(),
     max_retries::Int=5, # to be used if, e.g., the Hessian after the EM algorithm cannot be inverted,
-    chunksize_func = (n) -> ceil(Int, sqrt(n))
+    chunksize_func = (n) -> ceil(Int, sqrt(n)) # for Hessian chunksize
 )
 
     StatsAPI.fit(LCLmodel, formula, df, n_classes, start_memb, start_mnl, indices, method, quietly, varname_samplesplit, max_iter, ltolerance, multithreading, optim_method, optim_options, max_retries, chunksize_func)
@@ -114,14 +114,84 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
     return -sum(ll_n)
 end
 
+# function cond_probs_ll(coefs_mlogit::Matrix{Float64}, coefs_memb::Matrix{Float64}, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64},
+#     n_id::Int64, vec_choice::BitVector, n_classes::Int64,
+#     ll_n::Vector{Float64}, exp_mat_utils::Matrix{Float64}, exp_Xb_share::Matrix{Float64}, cond_probs_memb::Matrix{Float64}, ProbSeq_n::Matrix{Float64},
+#     id_map::Dict, chid_map::Dict, sumll::Vector{Float64}, lcl_H::Matrix{Float64})
+
+#     # Compute exponentiated utilities
+#     mul!(exp_mat_utils, mat_X, coefs_mlogit)
+#     exp_mat_utils .= exp.(exp_mat_utils)
+
+#     # Compute membership probabilities
+#     @inbounds for c in 1:(n_classes-1)
+#         exp_Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
+#     end
+#     exp_Xb_share[:, n_classes] .= 0.0
+#     exp_Xb_share .= exp.(exp_Xb_share)
+
+#     # Class shares
+#     probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+
+#     # Loop over subjects
+#     @inbounds for n in 1:n_id
+#         idx_n = id_map[n]  # Precomputed indices
+#         Y_n = @view vec_choice[idx_n]
+#         EXP_n = @view exp_mat_utils[idx_n, :]
+#         probs_memb_n = @view probs_memb[idx_n, :]
+
+#         # Preallocate for this subject
+#         cond_probs_memb_n = zeros(Float64, Base.length(Y_n), n_classes)
+
+#         # Get chid mapping for this individual
+#         chid_map_n = chid_map[n]
+
+#         # Loop over choice sets
+#         @inbounds for t in keys(chid_map_n)
+#             idx_t = chid_map_n[t]
+#             EXP_nt = @view EXP_n[idx_t, :]
+
+#             # Fill choice probabilities
+#             cond_probs_memb_n[idx_t, :] .= EXP_nt ./ sum(EXP_nt, dims=1)
+#         end
+
+#         # Compute likelihood
+#         ProbSeq_n .= exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1))
+#         ll_n[n] = log.(dot(ProbSeq_n, probs_memb_n[1, :]))
+
+#         # Compute conditional membership probabilities
+#         denom = dot(ProbSeq_n, probs_memb_n[1:1, :]')
+#         cond_probs_memb[idx_n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ denom
+#     end
+
+#     # Store results
+#     push!(sumll, sum(ll_n))
+#     for x in 1:n_classes
+#         lcl_H[:, x] .= cond_probs_memb[:, x]
+#     end
+# end
+
+# Print info for debugging NaNs
 function cond_probs_ll(coefs_mlogit::Matrix{Float64}, coefs_memb::Matrix{Float64}, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64},
     n_id::Int64, vec_choice::BitVector, n_classes::Int64,
     ll_n::Vector{Float64}, exp_mat_utils::Matrix{Float64}, exp_Xb_share::Matrix{Float64}, cond_probs_memb::Matrix{Float64}, ProbSeq_n::Matrix{Float64},
-    id_map::Dict, chid_map::Dict, sumll::Vector{Float64}, lcl_H::Matrix{Float64})
+    id_map::Dict, chid_map::Dict, sumll::Vector{Float64}, lcl_H::Matrix{Float64};
+    quietly::Bool = true # Added a keyword argument for quiet mode
+)
 
     # Compute exponentiated utilities
     mul!(exp_mat_utils, mat_X, coefs_mlogit)
     exp_mat_utils .= exp.(exp_mat_utils)
+
+    # Diagnostic for exp_mat_utils
+    quietly || begin
+        println("--- exp_mat_utils Diagnostics ---")
+        println(@sprintf "Contains NaN: %s, Contains Inf: %s" any(isnan, exp_mat_utils) any(isinf, exp_mat_utils))
+        if !(any(isnan, exp_mat_utils) || any(isinf, exp_mat_utils))
+             println(@sprintf "Min: %.4g, Max: %.4g, Mean: %.4g" minimum(exp_mat_utils) maximum(exp_mat_utils) mean(exp_mat_utils))
+        end
+        println("---------------------------------")
+    end
 
     # Compute membership probabilities
     @inbounds for c in 1:(n_classes-1)
@@ -130,47 +200,155 @@ function cond_probs_ll(coefs_mlogit::Matrix{Float64}, coefs_memb::Matrix{Float64
     exp_Xb_share[:, n_classes] .= 0.0
     exp_Xb_share .= exp.(exp_Xb_share)
 
-    # Class shares
-    probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+    # Diagnostic for exp_Xb_share (before softmax)
+     quietly || begin
+        println("--- exp_Xb_share Diagnostics ---")
+        println(@sprintf "Contains NaN: %s, Contains Inf: %s" any(isnan, exp_Xb_share) any(isinf, exp_Xb_share))
+        if !(any(isnan, exp_Xb_share) || any(isinf, exp_Xb_share))
+             println(@sprintf "Min: %.4g, Max: %.4g, Mean: %.4g" minimum(exp_Xb_share) maximum(exp_Xb_share) mean(exp_Xb_share))
+        end
+        println("---------------------------------")
+    end
 
-    # Loop over subjects
+    # Class shares (Softmax)
+    sum_exp_Xb_share = sum(exp_Xb_share, dims=2)
+
+    # Diagnostic for the denominator sum in membership probabilities
+     quietly || begin
+        println("--- Sum of exp_Xb_share Diagnostics ---")
+        println(@sprintf "Contains Zero: %s, Contains NaN: %s, Contains Inf: %s" any(iszero, sum_exp_Xb_share) any(isnan, sum_exp_Xb_share) any(isinf, sum_exp_Xb_share))
+        if !(any(isnan, sum_exp_Xb_share) || any(isinf, sum_exp_Xb_share))
+             println(@sprintf "Min: %.4g, Max: %.4g, Mean: %.4g" minimum(sum_exp_Xb_share) maximum(sum_exp_Xb_share) mean(sum_exp_Xb_share))
+        end
+        println("---------------------------------------")
+    end
+
+    probs_memb = exp_Xb_share ./ sum_exp_Xb_share
+
+    # Diagnostic for probs_memb
+    quietly || begin
+        println("--- probs_memb (Class Shares) Diagnostics ---")
+        println(@sprintf "Contains NaN: %s, Contains Inf: %s" any(isnan, probs_memb) any(isinf, probs_memb))
+         if !(any(isnan, probs_memb) || any(isinf, probs_memb))
+            println(@sprintf "Min: %.4g, Max: %.4g, Mean: %.4g" minimum(probs_memb) maximum(probs_memb) mean(probs_memb))
+        end
+        println("---------------------------------------------")
+    end
+
+
+    # Loop over subjects to compute individual likelihoods and conditional probabilities
     @inbounds for n in 1:n_id
-        idx_n = id_map[n]  # Precomputed indices
+        idx_n = id_map[n]
         Y_n = @view vec_choice[idx_n]
         EXP_n = @view exp_mat_utils[idx_n, :]
-        probs_memb_n = @view probs_memb[idx_n, :]
+        probs_memb_n = @view probs_memb[idx_n, :] # Only first row is used: probs_memb_n[1, :]
 
-        # Preallocate for this subject
         cond_probs_memb_n = zeros(Float64, Base.length(Y_n), n_classes)
-
-        # Get chid mapping for this individual
         chid_map_n = chid_map[n]
 
-        # Loop over choice sets
+        # Loop over choice sets within subject n
         @inbounds for t in keys(chid_map_n)
             idx_t = chid_map_n[t]
             EXP_nt = @view EXP_n[idx_t, :]
 
-            # Fill choice probabilities
-            cond_probs_memb_n[idx_t, :] .= EXP_nt ./ sum(EXP_nt, dims=1)
+            # Compute choice probabilities (Softmax within choice set)
+            sum_EXP_nt = sum(EXP_nt, dims=1)
+            # Add a small epsilon to the denominator sum if it's zero or very close to prevent division by zero
+            # Check for iszero and also very small numbers that could lead to large gradients
+            if any(x -> abs(x) < eps(Float64)*100, sum_EXP_nt) || any(isnan, sum_EXP_nt) || any(isinf, sum_EXP_nt)
+                # No print here as requested
+                 sum_EXP_nt = sum_EXP_nt .+ eps(Float64) * sign.(sum_EXP_nt .+ eps(Float64))
+                 sum_EXP_nt = ifelse.(iszero.(sum_EXP_nt), eps(Float64), sum_EXP_nt)
+            end
+
+            cond_probs_memb_n[idx_t, :] .= EXP_nt ./ sum_EXP_nt
         end
 
-        # Compute likelihood
-        ProbSeq_n .= exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1))
-        ll_n[n] = log.(dot(ProbSeq_n, probs_memb_n[1, :]))
+        # Compute likelihood for subject n
+        # This involves log.(cond_probs_memb_n) which is prone to -Inf if cond_probs_memb_n has zeros
+        # Add a small epsilon before taking log to prevent log(0)
+        log_cond_probs_n = log.(cond_probs_memb_n .+ eps(Float64))
 
-        # Compute conditional membership probabilities
+        # Compute the log-likelihood for each class, given the choices Y_n
+        log_ProbSeq_n_per_class = sum(log_cond_probs_n .* Y_n, dims=1)
+
+        # Exponentiate to get product of probabilities (likelihood of sequence given class)
+        ProbSeq_n .= exp.(log_ProbSeq_n_per_class)
+
+        # Compute the marginal likelihood for subject n: log(sum_k P(sequence|class_k) * P(class_k))
+        # This is log(dot(ProbSeq_n, probs_memb_n[1, :]))
+        sum_for_ll = dot(ProbSeq_n, probs_memb_n[1, :])
+
+        # Add epsilon to the sum if it's zero before taking log to prevent log(0)
+        if iszero(sum_for_ll) || isnan(sum_for_ll) || isinf(sum_for_ll)
+            # No print here as requested
+             sum_for_ll += eps(Float64)
+        end
+
+        ll_n[n] = log(sum_for_ll)
+
+
+        # Compute conditional membership probabilities (E-step responsibilities)
+        # Numerator: P(sequence|class_k) * P(class_k)
+        numerator = ProbSeq_n .* probs_memb_n[1:1, :]
+
+        # Denominator: sum_k P(sequence|class_k) * P(class_k)
         denom = dot(ProbSeq_n, probs_memb_n[1:1, :]')
-        cond_probs_memb[idx_n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ denom
+
+         # Add epsilon to denominator if it's zero or very close to prevent division by zero
+        if abs(denom) < eps(Float64)*100 || isnan(denom) || isinf(denom)
+            # No print here as requested
+            denom = denom + eps(Float64) * sign(denom + eps(Float64))
+            denom = ifelse(iszero(denom), eps(Float64), denom)
+        end
+
+        # Division to get conditional probabilities
+        cond_probs_memb_n_local = numerator ./ denom
+
+        # Assign to the main conditional membership probabilities matrix
+        cond_probs_memb[idx_n, :] .= cond_probs_memb_n_local
     end
 
+    # Diagnostic for individual log-likelihoods
+    quietly || begin
+        println("--- ll_n (Individual Log-Likelihoods) Diagnostics ---")
+        println(@sprintf "Contains NaN: %s, Contains Inf: %s" any(isnan, ll_n) any(isinf, ll_n))
+         if !(any(isnan, ll_n) || any(isinf, ll_n))
+            println(@sprintf "Min: %.4g, Max: %.4g, Mean: %.4g" minimum(ll_n) maximum(ll_n) mean(ll_n))
+        end
+        println("----------------------------------------------------")
+    end
+
+     # Diagnostic for cond_probs_memb (Conditional Membership Probabilities)
+    quietly || begin
+        println("--- cond_probs_memb (Conditional Membership Probabilities) Diagnostics ---")
+        println(@sprintf "Contains NaN: %s, Contains Inf: %s" any(isnan, cond_probs_memb) any(isinf, cond_probs_memb))
+         if !(any(isnan, cond_probs_memb) || any(isinf, cond_probs_memb))
+             println(@sprintf "Min: %.4g, Max: %.4g, Mean: %.4g" minimum(cond_probs_memb) maximum(cond_probs_memb) mean(cond_probs_memb))
+        end
+        println("--------------------------------------------------------------")
+    end
+
+
     # Store results
-    push!(sumll, sum(ll_n))
+    total_sum_ll = sum(ll_n)
+    push!(sumll, total_sum_ll)
+
+    # Diagnostic for total log-likelihood
+    quietly || begin
+        println("--- Total Log-Likelihood Diagnostics ---")
+        println(@sprintf "Value: %.4g, Contains NaN: %s, Contains Inf: %s" total_sum_ll isnan(total_sum_ll) isinf(total_sum_ll))
+        println("----------------------------------------")
+    end
+
+
+    # Assign conditional probabilities to lcl_H (assuming this is the purpose)
     for x in 1:n_classes
         lcl_H[:, x] .= cond_probs_memb[:, x]
     end
-end
 
+    return nothing
+end
 
 function StatsAPI.fit(::Type{LCLmodel},
     formula::FormulaTerm,
@@ -332,7 +510,7 @@ function StatsAPI.fit(::Type{LCLmodel},
             cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
                 n_id, vec_choice, n_classes,
                 ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
-                id_map, chid_map, sumll, lcl_H)
+                id_map, chid_map, sumll, lcl_H; quietly=quietly)
 
             quietly || println("Iteration 0 - Log likelihood: $(last(sumll))")
 
@@ -366,7 +544,7 @@ function StatsAPI.fit(::Type{LCLmodel},
                 cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
                     n_id, vec_choice, n_classes,
                     ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
-                    id_map, chid_map, sumll, lcl_H)
+                    id_map, chid_map, sumll, lcl_H; quietly=quietly)
 
                 quietly || println("Iteration $iter - Log likelihood: $(last(sumll))")
 

@@ -51,7 +51,7 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
 
     # lclogit
     model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
-    @test model_lclogit_em.loglikelihood ≈ -1006.354500868
+    @test model_lclogit_em.loglikelihood ≈ -1006.353793
     
     model_lclogit_grad = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient)
     @test model_lclogit_grad.loglikelihood ≈ -1006.3534820949649
