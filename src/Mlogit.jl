@@ -13,6 +13,7 @@ using ForwardDiff
 using DiffResults
 using FiniteDifferences
 using LinearAlgebra: diag, dot, mul!
+import LogExpFunctions
 # using NamedArrays # used to be in fmlogit.jl but might no longer be necessary
 # using Random # used to be in fmlogit.jl but might no longer be necessary
 # using CategoricalArrays # used to be in lclogit.jl but might no longer be necessary
