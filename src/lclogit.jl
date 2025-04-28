@@ -38,20 +38,20 @@ end
 
 function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64},
     n_id::Int64, vec_choice::BitVector, n_classes::Int64,
-    k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n, exp_mat_utils, exp_Xb_share,
+    k_utility::Int64, k_membership::Int64, nrows::Int64, ll_n, mat_utils, Xb_share,
     id_map::Dict, chid_map::Dict)
 
     # Preallocate memory for log-likelihood
     if eltype(ll_n) ≠ eltype(theta)
         ll_n = zeros(eltype(theta), n_id)
     end
-    if eltype(exp_mat_utils) ≠ eltype(theta)
-        exp_mat_utils = zeros(eltype(theta), size(mat_X, 1), n_classes)
+    if eltype(mat_utils) ≠ eltype(theta)
+        mat_utils = zeros(eltype(theta), size(mat_X, 1), n_classes)
     end
-    if eltype(exp_Xb_share) ≠ eltype(theta)
-        exp_Xb_share = zeros(eltype(theta), nrows, n_classes)
+    if eltype(Xb_share) ≠ eltype(theta)
+        Xb_share = zeros(eltype(theta), nrows, n_classes)
     else
-        exp_Xb_share[:, n_classes] .= 0.0
+        Xb_share[:, n_classes] .= 0.0
     end
 
 
@@ -59,56 +59,80 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
     mat_coefs_mlogit_ll = reshape(theta[begin:(n_classes*k_utility)], k_utility, n_classes)
     coefs_memb_ll = reshape(theta[(n_classes*k_utility+1):end], (k_membership + 1), (n_classes - 1))
 
-    # exp_mat_utils = zeros(eltype(theta), size(mat_X, 1), n_classes)
-    # exp_Xb_share = zeros(eltype(theta), nrows, n_classes)
-
     # Efficient matrix multiplication
-    mul!(exp_mat_utils, mat_X, mat_coefs_mlogit_ll)
-
-    # Element-wise exponentiation (preserving Dual types)
-    exp_mat_utils .= exp.(exp_mat_utils)
+    mul!(mat_utils, mat_X, mat_coefs_mlogit_ll)
 
     # Compute membership probabilities efficiently
     @inbounds for c in 1:(n_classes-1)
-        exp_Xb_share[:, c] .= mat_memb * coefs_memb_ll[:, c]
+        Xb_share[:, c] .= mat_memb * coefs_memb_ll[:, c]
     end
-    exp_Xb_share .= exp.(exp_Xb_share)
+    Xb_share[:, n_classes] .= 0.0
 
     # Class shares
-    probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+    log_probs_memb = Xb_share .- LogExpFunctions.logsumexp(Xb_share, dims=2)
 
     # Preallocate for conditional probabilities
     cond_probs_memb = zeros(eltype(theta), nrows, n_classes)
 
     # Loop over subjects
     @inbounds for n in 1:n_id
-        idx_n = id_map[n]  # Precomputed indices
+        idx_n = id_map[n]  # Precomputed indices
         Y_n = @view vec_choice[idx_n]
-        EXP_n = @view exp_mat_utils[idx_n, :]
-        probs_memb_n = @view probs_memb[idx_n, :]
+        utils_n = @view mat_utils[idx_n, :] # Log-utilities for individual n
+        log_probs_memb_n = @view log_probs_memb[idx_n, :] # Log-membership probabilities for individual n (repeated for each alternative)
 
-        # Preallocate for this subject
-        cond_probs_memb_n = zeros(eltype(theta), Base.length(Y_n), n_classes)
+        # Preallocate for this subject (log_choiceprobs_n is still useful for intermediate log-softmax per alternative)
+        log_choiceprobs_n = zeros(eltype(theta), Base.length(Y_n), n_classes) # log P(alternative | choice set, class k)
 
         # Get chid mapping for this individual
         chid_map_n = chid_map[n]
 
-        # Loop over choice sets t
-        @inbounds for t in keys(chid_map_n)
-            idx_t = chid_map_n[t]
-            EXP_nt = @view EXP_n[idx_t, :]
+        # --- Standard Calculation of log(P(choices_n | class k)) ---
+        # Initialize vector to sum log-probabilities over choice sets for each class
+        log_prob_choices_given_class = zeros(eltype(theta), n_classes) # Size (n_classes,)
 
-            # Fill choice probabilities
-            cond_probs_memb_n[idx_t, :] .= EXP_nt ./ sum(EXP_nt, dims=1)
+        # Loop over choice sets
+        @inbounds for t in keys(chid_map_n)
+            idx_t = chid_map_n[t] # Indices within idx_n for alternatives in choice set t
+            utils_nt = @view utils_n[idx_t, :] # Log-utilities for choice set t
+
+            # Fill choice probabilities (log-probabilities using logsoftmax) for the current choice set
+            # This calculates log(P(alternative | choice set t, class k)) for all alternatives in set t
+            log_choiceprobs_n_t = utils_nt .- LogExpFunctions.logsumexp(utils_nt, dims=1) # Size (num_alternatives_in_t, n_classes)
+            # Store these log-probabilities (optional, but keeps structure similar if needed elsewhere)
+            log_choiceprobs_n[idx_t, :] .= log_choiceprobs_n_t
+
+            # Identify the chosen alternative within this choice set t
+            Y_nt = @view Y_n[idx_t] # Boolean vector for chosen alternative in choice set t
+            chosen_alt_local_idx = findfirst(Y_nt) # Index within idx_t and log_choiceprobs_n_t
+
+            # Accumulate the log-probability of the chosen alternative for each class
+            @inbounds for k in 1:n_classes
+                # log(P(chosen alternative in set t | set t, class k)) is log_choiceprobs_n_t[chosen_alt_local_idx, k]
+                log_prob_choices_given_class[k] += log_choiceprobs_n_t[chosen_alt_local_idx, k]
+            end
         end
+        # After this loop, log_prob_choices_given_class holds the standard log(P(choices_n | class k))
 
         # Compute likelihood
-        ProbSeq_n = exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1))
-        ll_n[n] = log.(dot(ProbSeq_n, probs_memb_n[1, :]))
+        # The original calculation of log_ProbSeq_n is replaced by log_prob_choices_given_class.
+        # log_ProbSeq_n .= sum(log_choiceprobs_n .* Y_n, dims=1) # Original non-standard calculation (remove this line)
 
-        # Compute conditional membership probabilities
-        denom = dot(ProbSeq_n, probs_memb_n[1:1, :]')
-        cond_probs_memb[idx_n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ denom
+        # Stable likelihood using logsumexp with the standard log(P(choices_n | class k))
+        # ll_n[n] = logsumexp(log(P(choices_n | class k)) + log(P(class k)) for k in 1:n_classes)
+        # We use log_prob_choices_given_class (size (n_classes,)) and log_probs_memb_n[1, :] (size (1, n_classes))
+        ll_n[n] = LogExpFunctions.logsumexp(log_prob_choices_given_class .+ vec(log_probs_memb_n[1, :]))
+
+        # ... rest of the individual loop (conditional probabilities, which will also use log_prob_choices_given_class)
+        # compute the “joint” log‐scores
+        log_joint = log_prob_choices_given_class .+ vec(log_probs_memb_n[1, :]) # Use log_prob_choices_given_class here
+        # compute log of the normalizing constant
+        log_denom = LogExpFunctions.logsumexp(log_joint) # This is equivalent to ll_n[n]
+        # exponentiate only once, to get the actual conditional probabilities
+        tmp_exp = exp.(log_joint .- log_denom) # Result is (n_classes,), no need for [1, :] if log_joint is (n_classes,)
+        for i in idx_n
+            cond_probs_memb[i, :] .= tmp_exp # Transpose tmp_exp for broadcasting assignment
+        end
     end
 
     return -sum(ll_n)
@@ -116,58 +140,87 @@ end
 
 function cond_probs_ll(coefs_mlogit::Matrix{Float64}, coefs_memb::Matrix{Float64}, mat_X::Matrix{Float64}, mat_memb::Matrix{Float64},
     n_id::Int64, vec_choice::BitVector, n_classes::Int64,
-    ll_n::Vector{Float64}, exp_mat_utils::Matrix{Float64}, exp_Xb_share::Matrix{Float64}, cond_probs_memb::Matrix{Float64}, ProbSeq_n::Matrix{Float64},
+    ll_n::Vector{Float64}, mat_utils::Matrix{Float64}, Xb_share::Matrix{Float64}, cond_probs_memb::Matrix{Float64}, log_ProbSeq_n::Matrix{Float64},
     id_map::Dict, chid_map::Dict, sumll::Vector{Float64}, lcl_H::Matrix{Float64})
 
-    # Compute exponentiated utilities
-    mul!(exp_mat_utils, mat_X, coefs_mlogit)
-    exp_mat_utils .= exp.(exp_mat_utils)
+    mul!(mat_utils, mat_X, coefs_mlogit)
+    # mat_utils .= mat_X * coefs_mlogit
 
     # Compute membership probabilities
     @inbounds for c in 1:(n_classes-1)
-        exp_Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
+        Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
     end
-    exp_Xb_share[:, n_classes] .= 0.0
-    exp_Xb_share .= exp.(exp_Xb_share)
+    Xb_share[:, n_classes] .= 0.0
 
     # Class shares
-    probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+    log_probs_memb = Xb_share .- LogExpFunctions.logsumexp(Xb_share, dims=2)
 
     # Loop over subjects
     @inbounds for n in 1:n_id
         idx_n = id_map[n]  # Precomputed indices
         Y_n = @view vec_choice[idx_n]
-        EXP_n = @view exp_mat_utils[idx_n, :]
-        probs_memb_n = @view probs_memb[idx_n, :] # Original uses idx_n here, but probs_memb is n_id x n_classes. Should likely be probs_memb[n, :]. Let's assume probs_memb[n, :] is intended.
+        utils_n = @view mat_utils[idx_n, :] # Log-utilities for individual n
+        log_probs_memb_n = @view log_probs_memb[idx_n, :] # Log-membership probabilities for individual n (repeated for each alternative)
 
-        # Preallocate for this subject
-        cond_probs_memb_n = zeros(Float64, Base.length(Y_n), n_classes)
+        # Preallocate for this subject (log_choiceprobs_n is still useful for intermediate log-softmax per alternative)
+        log_choiceprobs_n = zeros(Float64, Base.length(Y_n), n_classes) # log P(alternative | choice set, class k)
 
         # Get chid mapping for this individual
         chid_map_n = chid_map[n]
 
+        # --- Standard Calculation of log(P(choices_n | class k)) ---
+        # Initialize vector to sum log-probabilities over choice sets for each class
+        log_prob_choices_given_class = zeros(Float64, n_classes) # Size (n_classes,)
+
         # Loop over choice sets
         @inbounds for t in keys(chid_map_n)
-            idx_t = chid_map_n[t]
-            EXP_nt = @view EXP_n[idx_t, :]
+            idx_t = chid_map_n[t] # Indices within idx_n for alternatives in choice set t
+            utils_nt = @view utils_n[idx_t, :] # Log-utilities for choice set t
 
-            # Fill choice probabilities
-            cond_probs_memb_n[idx_t, :] .= EXP_nt ./ sum(EXP_nt, dims=1)
+            # Fill choice probabilities (log-probabilities using logsoftmax) for the current choice set
+            # This calculates log(P(alternative | choice set t, class k)) for all alternatives in set t
+            log_choiceprobs_n_t = utils_nt .- LogExpFunctions.logsumexp(utils_nt, dims=1) # Size (num_alternatives_in_t, n_classes)
+            # Store these log-probabilities (optional, but keeps structure similar if needed elsewhere)
+            log_choiceprobs_n[idx_t, :] .= log_choiceprobs_n_t
+
+            # Identify the chosen alternative within this choice set t
+            Y_nt = @view Y_n[idx_t] # Boolean vector for chosen alternative in choice set t
+            chosen_alt_local_idx = findfirst(Y_nt) # Index within idx_t and log_choiceprobs_n_t
+
+            # Accumulate the log-probability of the chosen alternative for each class
+            @inbounds for k in 1:n_classes
+                # log(P(chosen alternative in set t | set t, class k)) is log_choiceprobs_n_t[chosen_alt_local_idx, k]
+                log_prob_choices_given_class[k] += log_choiceprobs_n_t[chosen_alt_local_idx, k]
+            end
         end
+        # After this loop, log_prob_choices_given_class holds the standard log(P(choices_n | class k))
 
         # Compute likelihood
-        ProbSeq_n .= exp.(sum(log.(cond_probs_memb_n) .* Y_n, dims=1))
-        ll_n[n] = log.(dot(ProbSeq_n, probs_memb_n[1, :])) # Original uses probs_memb_n[1, :]. Assuming probs_memb_n is size (1, n_classes) or similar for broadcasting here. If probs_memb_n is (num_alternatives_in_n, n_classes), probs_memb_n[1, :] takes the first row. If probs_memb is (n_id, n_classes) and probs_memb_n = probs_memb[n, :], then probs_memb_n is (n_classes,) and probs_memb_n[1, :] would be the first element. Let's assume the intention is dot(ProbSeq_n, probs_memb_n) where probs_memb_n is the (n_classes,) vector for individual n.
+        # The original calculation of log_ProbSeq_n is replaced by log_prob_choices_given_class.
+        # log_ProbSeq_n .= sum(log_choiceprobs_n .* Y_n, dims=1) # Original non-standard calculation (remove this line)
 
-        # Compute conditional membership probabilities
-        denom = dot(ProbSeq_n, probs_memb_n[1:1, :]') # Original uses probs_memb_n[1:1, :]'. Assuming this matches the denominator in the likelihood calculation.
-        cond_probs_memb[idx_n, :] .= (ProbSeq_n .* probs_memb_n[1:1, :]) ./ denom
+        # Stable likelihood using logsumexp with the standard log(P(choices_n | class k))
+        # ll_n[n] = logsumexp(log(P(choices_n | class k)) + log(P(class k)) for k in 1:n_classes)
+        # We use log_prob_choices_given_class (size (n_classes,)) and log_probs_memb_n[1, :] (size (1, n_classes))
+        ll_n[n] = LogExpFunctions.logsumexp(log_prob_choices_given_class .+ vec(log_probs_memb_n[1, :]))
+
+        # ... rest of the individual loop (conditional probabilities, which will also use log_prob_choices_given_class)
+        # compute the “joint” log‐scores
+        log_joint = log_prob_choices_given_class .+ vec(log_probs_memb_n[1, :]) # Use log_prob_choices_given_class here
+        # compute log of the normalizing constant
+        log_denom = LogExpFunctions.logsumexp(log_joint) # This is equivalent to ll_n[n]
+
+        # exponentiate only once, to get the actual conditional probabilities
+        tmp_exp = exp.(log_joint .- log_denom) # Result is (n_classes,), no need for [1, :] if log_joint is (n_classes,)
+        for i in idx_n
+            cond_probs_memb[i, :] .= tmp_exp # Transpose tmp_exp for broadcasting assignment
+        end
     end
 
     # Store results
     push!(sumll, sum(ll_n))
-    for x in 1:n_classes
-        lcl_H[:, x] .= cond_probs_memb[:, x]
+    for c in 1:n_classes
+        lcl_H[:, c] .= cond_probs_memb[:, c]
     end
 end
 
@@ -265,19 +318,24 @@ function StatsAPI.fit(::Type{LCLmodel},
 
     cond_probs_memb::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # Class share indices (= membership coefficients? )
-    exp_Xb_share::Matrix{Float64} = zeros(Float64, nrows, n_classes)
+    Xb_share::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # matrix of utilities
-    exp_mat_utils::Matrix{Float64} = zeros(Float64, nrows, n_classes)
+    mat_utils::Matrix{Float64} = zeros(Float64, nrows, n_classes)
     # [1 x nclasses] vector of the likelihood of actual choice sequence
-    ProbSeq_n::Matrix{Float64} = zeros(Float64, 1, n_classes)
+    log_ProbSeq_n::Matrix{Float64} = zeros(Float64, 1, n_classes)
 
     ll_n::Vector{Float64} = zeros(Float64, n_id)
 
     id_map, chid_map = create_chid_map(vec_chid, vec_id, n_id)
 
     function loglik_obj(theta)
-        return loglik_lc(theta, mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, exp_mat_utils, exp_Xb_share, id_map, chid_map)
+        return loglik_lc(theta, mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, mat_utils, Xb_share, id_map, chid_map)
     end
+
+    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, mat_utils, Xb_share, id_map, chid_map)
+    loglik_start = -loglik_lc([vec(coefs_mlogit); vec(coefs_memb)], mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, mat_utils, Xb_share, id_map, chid_map)
+    quietly || println("Null log-likelihood: $loglik_0")
+    quietly || println("Start log-likelihood: $loglik_start")
 
     # set up objects to be defined inside the while restarted loop
     hessian = Matrix{Float64}(undef, n_coefficients, n_coefficients)
@@ -330,7 +388,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
             cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
                 n_id, vec_choice, n_classes,
-                ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
+                ll_n, mat_utils, Xb_share, cond_probs_memb, log_ProbSeq_n,
                 id_map, chid_map, sumll, lcl_H)
 
             quietly || println("Iteration 0 - Log likelihood: $(last(sumll))")
@@ -364,7 +422,7 @@ function StatsAPI.fit(::Type{LCLmodel},
 
                 cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
                     n_id, vec_choice, n_classes,
-                    ll_n, exp_mat_utils, exp_Xb_share, cond_probs_memb, ProbSeq_n,
+                    ll_n, mat_utils, Xb_share, cond_probs_memb, log_ProbSeq_n,
                     id_map, chid_map, sumll, lcl_H)
 
                 quietly || println("Iteration $iter - Log likelihood: $(last(sumll))")
@@ -430,17 +488,15 @@ function StatsAPI.fit(::Type{LCLmodel},
     end
 
     loglik = -DiffResults.value(diffresult)::Float64
-    loglik_0 = -loglik_lc(zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)), mat_X, mat_memb, n_id, vec_choice, n_classes, k_utility, k_membership, nrows, ll_n, exp_mat_utils, exp_Xb_share, id_map, chid_map)
-
+    
     # shares calculation
     for c in 1:(n_classes-1)
-        exp_Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
+        Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
     end
 
-    exp_Xb_share = exp.(exp_Xb_share)
-
     # Class shares
-    probs_memb = exp_Xb_share ./ sum(exp_Xb_share, dims=2)
+    log_probs_memb = Xb_share .- LogExpFunctions.logsumexp(Xb_share, dims=2)
+    probs_memb = exp.(log_probs_memb)
     shares::Vector{Float64} = vec(mean(probs_memb[lcl_first_by_id, :], dims=1))
 
     r = LCLmodel(
@@ -466,7 +522,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         score=nothing,
         shares=shares,
         start=zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)),
-        startloglikelihood=loglik_0,
+        startloglikelihood=loglik_start,
         time=time() - start_time,
         vcov=vcov
     )

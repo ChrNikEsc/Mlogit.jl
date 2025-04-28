@@ -58,7 +58,7 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
 end
 
 
-
+# lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 3, method=:em)
 # Mlogit.regtable(model_lclogit_em)
 # Mlogit.regtable(model_lclogit_grad)
 

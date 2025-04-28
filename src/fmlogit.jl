@@ -101,7 +101,8 @@ function loglik_fmlogit(theta, y, X, vec_weights, k, j; multithreading=false)
 
     X_betamat = X * transpose(betamat)
 
-    log_sum_exp_Xb = log.(sum(exp.(X_betamat), dims=2))
+    # log_sum_exp_Xb = log.(sum(exp.(X_betamat), dims=2))
+    log_sum_exp_Xb = LogExpFunctions.logsumexp(X_betamat, dims=2)
 
     function call_L(i)
         return sum(view(y, :, i) .* (view(X_betamat, :, i) - log_sum_exp_Xb))
