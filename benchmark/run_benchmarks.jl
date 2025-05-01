@@ -40,10 +40,10 @@ mlogit(formula, df_mlogit, weights=:weight)
 # display(median_results)
 # BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median_results.allocs) * ".json", median(results))
 
-# mat_X, vec_choice, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema = Mlogit.prepare_mlogit_inputs(formula, df_mlogit, Mlogit.xlogit_indices(), :weight, nothing, false)
+mat_X, vec_choice, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema = Mlogit.prepare_mlogit_inputs(formula, df_mlogit, Mlogit.xlogit_indices(), :weight, nothing, false)
 
-# b_fit_mlogit = @benchmarkable Mlogit.fit_mlogit($mat_X, $vec_choice, $coef_start, $vec_chid, $vec_weights_choice; optim_options=Optim.Options()) seconds = 30
-# results_fit_mlogit = run(b_fit_mlogit)
+b_fit_mlogit = @benchmarkable Mlogit.fit_mlogit($mat_X, $vec_choice, $coef_start, $vec_chid, $vec_weights_choice; optim_options=Optim.Options()) seconds = 30
+results_fit_mlogit = run(b_fit_mlogit)
 # BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_fit_mlogit).allocs) * ".json", median(results_fit_mlogit))
 
 # reportopt_fit_mlogit = @report_opt Mlogit.fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; optim_options=Optim.Options())
@@ -71,13 +71,13 @@ mlogit(formula, df_mlogit, weights=:weight)
 # println(reportopt_fmlogit)
 
 # lclogit
-df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
-model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
+# df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
+# model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
 
-b_lclogit_em = @benchmarkable lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), $df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit) seconds=30
-results_lclogit_em = run(b_lclogit_em)
-BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_lclogit_em).allocs) * ".json", median(results_lclogit_em))
-results_lclogit_em
+# b_lclogit_em = @benchmarkable lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), $df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit) seconds=30
+# results_lclogit_em = run(b_lclogit_em)
+# BenchmarkTools.save("benchmark/results_"*Dates.format(Dates.now(), "yyyy-mm-dd-HH-MM-SS") * "_" * string(median(results_lclogit_em).allocs) * ".json", median(results_lclogit_em))
+# results_lclogit_em
 
 # b_lclogit_grad = @benchmarkable lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), $df_lclogit, 7, start_mnl=model_lclogit_em.coef_mnl, start_memb=model_lclogit_em.coef_memb, method=:gradient) seconds=30
 # results_lclogit_grad = run(b_lclogit_grad)
