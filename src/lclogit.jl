@@ -388,8 +388,8 @@ function StatsAPI.fit(::Type{LCLmodel},
                     Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
                     coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
                 else
-                    opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, cond_probs_memb[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), 1, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
-                    coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), 2, n_classes - 1)
+                    opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, cond_probs_memb[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), k_membership, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
+                    coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), k_membership + 1, n_classes - 1)
                 end
 
                 cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
