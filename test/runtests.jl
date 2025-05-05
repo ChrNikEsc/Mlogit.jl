@@ -62,5 +62,7 @@ end
 # Mlogit.regtable(model_lclogit_em)
 # Mlogit.regtable(model_lclogit_grad)
 
+# model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
 # Mlogit.coefplot(model_lclogit_em)
+# Mlogit.coefplot(model_lclogit_em, by=:coef)
 # Mlogit.coefplot(model_lclogit_grad)

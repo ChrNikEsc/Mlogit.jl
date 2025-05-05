@@ -339,23 +339,17 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
 
     fig = Figure(size=size)
 
-    # g_mnl = GridLayout(fig[1:nclasses, 1])
-    # g_share = GridLayout(fig[1:nclasses, 2])
-    # g_memb = GridLayout(fig[1:nclasses, 3])
-
-    # colsize!(fig.layout, 2, Relative(1/20))
-
-
     if by == :class
 
         ax_mnl = Axis(fig[1:nclasses, 1:10], yreversed=true)
+        xlims!(ax_mnl, minimum(data_mnl.coef) * 1.1, maximum(data_mnl.coef) * 1.1)
         ylims!(ax_mnl, nclasses * nmnlcoef + 0.5, 0.5)
         ax_mnl.yticks = (1:nrow(data_mnl), data_mnl.coefname)
 
         for (i, mnlcoefname) in enumerate(unique(model_data[model_data.model.==:mnl, :].coefname))
             data_mnlcoef = subset(model_data, :coefname => x -> x .== mnlcoefname)
 
-            scatterlines!(ax_mnl, data_mnlcoef.coef, data_mnlcoef.class .* nmnlcoef .+ i .- nmnlcoef, color=data_mnlcoef.coefname_color, marker=data_mnlcoef.marker, markersize=model.shares[data_mnlcoef.class] .* 15 .* nclasses)
+            scatterlines!(ax_mnl, data_mnlcoef.coef, data_mnlcoef.class .* nmnlcoef .+ i .- nmnlcoef, color=data_mnlcoef.coefname_color, marker=data_mnlcoef.marker)
             for ii in 1:nrow(data_mnlcoef)
                 linesegments!(ax_mnl, [(data_mnlcoef.ci_lo[ii], data_mnlcoef.class[ii] .* nmnlcoef .+ i .- nmnlcoef), (data_mnlcoef.ci_hi[ii], data_mnlcoef.class[ii] .* nmnlcoef .+ i .- nmnlcoef)], color=data_mnlcoef.coefname_color[ii])
             end
@@ -364,7 +358,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
         vlines!(ax_mnl, [0], color=:black, linewidth=2)
         hlines!(ax_mnl, [i * nmnlcoef + 0.5 for i in 1:nclasses], color=:black, linewidth=1)
 
-        text!(repeat([minimum(data_mnl.coef) * 1.2], nclasses), (1:nclasses) .* nmnlcoef .- ((nmnlcoef - 1) / 2), text="Class " .* string.(1:nclasses) .* [@sprintf(", %.2f %%", model.shares[i] * 100) for i in 1:nclasses], align=(:left, :center), fontsize=17)
+        # text!(repeat([minimum(data_mnl.coef) * 1.2], nclasses), (1:nclasses) .* nmnlcoef .- ((nmnlcoef - 1) / 2), text="Class " .* string.(1:nclasses) .* [@sprintf(", %.2f %%", model.shares[i] * 100) for i in 1:nclasses], align=(:left, :center), fontsize=17)
 
 
         # shares
@@ -384,13 +378,14 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
         # membership
 
         ax_memb = Axis(fig[1:nclasses, 12:15], yreversed=true, yaxisposition=:right)
+        xlims!(ax_memb, minimum(data_memb.coef) * 1.1, maximum(data_memb.coef) * 1.1)
         ylims!(ax_memb, nclasses * nmembcoef + 0.5, 0.5)
         ax_memb.yticks = (1:nrow(data_memb), data_memb.coefname)
 
         for (i, membcoefname) in enumerate(unique(data_memb.coefname))
             data_membcoef = subset(data_memb, :coefname => x -> x .== membcoefname)
 
-            scatterlines!(ax_memb, data_membcoef.coef, data_membcoef.class .* nmembcoef .+ i .- nmembcoef, color=data_membcoef.coefname_color, marker=data_membcoef.marker, markersize=model.shares[data_membcoef.class] .* 15 .* nclasses)
+            scatterlines!(ax_memb, data_membcoef.coef, data_membcoef.class .* nmembcoef .+ i .- nmembcoef, color=data_membcoef.coefname_color, marker=data_membcoef.marker, markersize=model.shares[data_membcoef.class] .* 10 .* nclasses)
             for ii in 1:nrow(data_membcoef)
                 linesegments!(ax_memb, [(data_membcoef.ci_lo[ii], data_membcoef.class[ii] .* nmembcoef .+ i .- nmembcoef), (data_membcoef.ci_hi[ii], data_membcoef.class[ii] .* nmembcoef .+ i .- nmembcoef)], color=data_membcoef.coefname_color[ii])
             end
@@ -407,6 +402,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
 
     elseif by == :coef
         ax_mnl = Axis(fig[1, 1], yreversed=true)
+        xlims!(ax_mnl, minimum(data_mnl.coef) * 1.1, maximum(data_mnl.coef) * 1.1)
         ylims!(ax_mnl, nclasses * nmnlcoef + 0.5, 0.5)
 
         vlines!(ax_mnl, [0], color=:black, linewidth=3)
