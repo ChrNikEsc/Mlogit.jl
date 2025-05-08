@@ -319,7 +319,7 @@ function lclmodel_data(model::LCLmodel; level=0.95)
     return df
 end
 
-function coefplot(model::LCLmodel; level=0.95, by=:class)
+function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), membaxissettings=(;))
     fontsize_theme = Theme(fontsize=17)
     set_theme!(fontsize_theme)
     # size = (1600, 900)
@@ -343,7 +343,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
 
     if by == :class
 
-        ax_mnl = Axis(fig[1:nclasses, 1:10], yreversed=true)
+        ax_mnl = Axis(fig[1:nclasses, 1:10], yreversed=true; mnlaxissettings...)
         xlims!(ax_mnl, minimum(data_mnl.coef) * 1.1, maximum(data_mnl.coef) * 1.1)
         ylims!(ax_mnl, nclasses * nmnlcoef + 0.5, 0.5)
         ax_mnl.yticks = (1:nrow(data_mnl), data_mnl.coefname)
@@ -379,7 +379,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
 
         # membership
 
-        ax_memb = Axis(fig[1:nclasses, 12:15], yreversed=true, yaxisposition=:right)
+        ax_memb = Axis(fig[1:nclasses, 12:15], yreversed=true, yaxisposition=:right; membaxissettings...)
         xlims!(ax_memb, minimum(data_memb.coef) * 1.1, maximum(data_memb.coef) * 1.1)
         ylims!(ax_memb, nclasses * nmembcoef + 0.5, 0.5)
         ax_memb.yticks = (1:nrow(data_memb), data_memb.coefname)
@@ -403,13 +403,13 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
         fig
 
     elseif by == :coef
-        ax_mnl = Axis(fig[1, 1], yreversed=true)
+        ax_mnl = Axis(fig[1, 1], yreversed=true; mnlaxissettings...)
         xlims!(ax_mnl, minimum(data_mnl.coef) * 1.1, maximum(data_mnl.coef) * 1.1)
         ylims!(ax_mnl, nclasses * nmnlcoef + 0.5, 0.5)
 
         vlines!(ax_mnl, [0], color=:black, linewidth=3)
         hlines!(ax_mnl, [i * nclasses + 0.5 for i in 1:nmnlcoef], color=:black, linewidth=1)
-        ax_mnl.yticks = (1:nrow(data_mnl), "Class " .* string.(repeat(1:nclasses, outer=nmnlcoef)))
+        ax_mnl.yticks = (1:nrow(data_mnl), repeat(model.coefnames_mnl, inner=nclasses) .* " - Class " .* string.(repeat(1:nclasses, outer=nmnlcoef)))
 
         for (i, c) in enumerate(unique(model_data[model_data.model.==:mnl, :].class))
             data_class = subset(model_data, :class => x -> x .== c)
@@ -420,7 +420,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class)
             end
         end
 
-        text!(repeat([minimum(data_mnl.coef) * 1.2], nmnlcoef), (1:nmnlcoef) .* nclasses .- ((nclasses - 1) / 2), text=model.coefnames_mnl, align=(:left, :center), fontsize=17)
+        # text!(repeat([minimum(data_mnl.coef) * 1.2], nmnlcoef), (1:nmnlcoef) .* nclasses .- ((nclasses - 1) / 2), text=model.coefnames_mnl, align=(:left, :center), fontsize=17)
 
         fig
     end
