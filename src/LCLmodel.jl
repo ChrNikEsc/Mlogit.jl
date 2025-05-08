@@ -322,7 +322,9 @@ end
 function coefplot(model::LCLmodel; level=0.95, by=:class)
     fontsize_theme = Theme(fontsize=17)
     set_theme!(fontsize_theme)
-    size = (1600, 900)
+    # size = (1600, 900)
+    required_lines::Int64 = maximum([Base.size(model.coef_mnl, 1), Base.size(model.coef_memb, 1)]) * model.nclasses
+    size = (1600, required_lines * 25)
 
     model_data = lclmodel_data(model, level=level)
     colorscheme = get(ColorSchemes.Dark2_8, range(0.0, 1.0, length=maximum(model_data.coefname_index)))
