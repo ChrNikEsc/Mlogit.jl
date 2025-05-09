@@ -302,6 +302,12 @@ end
 
 function lclmodel_data(model::LCLmodel; level=0.95)
     ci = confint(model, level=level)
+    cc = [vec(model.coef_mnl); vec(model.coef_memb)]
+    se = stderror(model)
+    zz0 = cc ./ se
+    # p0 = ccdf.(FDist(1, dof_residual(model)), abs2.(zz0)) #same as, but faster than: p0 = 2.0 * ccdf.(TDist(dof_residual(model)), abs.(zz0))
+    p0 = 2.0 * ccdf.(Normal(), abs.(zz0))
+
 
     df = DataFrame(
         row=1:dof(model),
@@ -310,7 +316,8 @@ function lclmodel_data(model::LCLmodel; level=0.95)
         class=[repeat(1:model.nclasses, inner=Base.length(model.coefnames_mnl)); repeat(1:(model.nclasses-1), inner=Base.length(model.coefnames_memb))],
         coef=coef(model),
         ci_lo=ci[:, 1],
-        ci_hi=ci[:, 2]
+        ci_hi=ci[:, 2],
+        p0=p0
     )
 
     transform!(df, :coefname => (coefname -> remap_to_indices(coefname)) => :coefname_index)
@@ -346,12 +353,13 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
         ax_mnl = Axis(fig[1:nclasses, 1:10], yreversed=true; mnlaxissettings...)
         xlims!(ax_mnl, minimum(data_mnl.coef) * 1.1, maximum(data_mnl.coef) * 1.1)
         ylims!(ax_mnl, nclasses * nmnlcoef + 0.5, 0.5)
-        ax_mnl.yticks = (1:nrow(data_mnl), data_mnl.coefname)
+        ax_mnl.yticks = (1:nrow(data_mnl), [rich(row.coefname * get_stars(row.p0), color=get_label_color(row.p0, level=level)) for row in eachrow(data_mnl)])
+        # display(data_mnl)
 
         for (i, mnlcoefname) in enumerate(unique(model_data[model_data.model.==:mnl, :].coefname))
             data_mnlcoef = subset(model_data, :coefname => x -> x .== mnlcoefname)
 
-            scatterlines!(ax_mnl, data_mnlcoef.coef, data_mnlcoef.class .* nmnlcoef .+ i .- nmnlcoef, color=data_mnlcoef.coefname_color, marker=data_mnlcoef.marker)
+            scatter!(ax_mnl, data_mnlcoef.coef, data_mnlcoef.class .* nmnlcoef .+ i .- nmnlcoef, color=data_mnlcoef.coefname_color, marker=data_mnlcoef.marker)
             for ii in 1:nrow(data_mnlcoef)
                 linesegments!(ax_mnl, [(data_mnlcoef.ci_lo[ii], data_mnlcoef.class[ii] .* nmnlcoef .+ i .- nmnlcoef), (data_mnlcoef.ci_hi[ii], data_mnlcoef.class[ii] .* nmnlcoef .+ i .- nmnlcoef)], color=data_mnlcoef.coefname_color[ii])
             end
@@ -382,12 +390,12 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
         ax_memb = Axis(fig[1:nclasses, 12:15], yreversed=true, yaxisposition=:right; membaxissettings...)
         xlims!(ax_memb, minimum(data_memb.coef) * 1.1, maximum(data_memb.coef) * 1.1)
         ylims!(ax_memb, nclasses * nmembcoef + 0.5, 0.5)
-        ax_memb.yticks = (1:nrow(data_memb), data_memb.coefname)
+        ax_memb.yticks = (1:nrow(data_memb), [rich(row.coefname * get_stars(row.p0), color=get_label_color(row.p0, level=level)) for row in eachrow(data_memb)])
 
         for (i, membcoefname) in enumerate(unique(data_memb.coefname))
             data_membcoef = subset(data_memb, :coefname => x -> x .== membcoefname)
 
-            scatterlines!(ax_memb, data_membcoef.coef, data_membcoef.class .* nmembcoef .+ i .- nmembcoef, color=data_membcoef.coefname_color, marker=data_membcoef.marker, markersize=model.shares[data_membcoef.class] .* 10 .* nclasses)
+            scatter!(ax_memb, data_membcoef.coef, data_membcoef.class .* nmembcoef .+ i .- nmembcoef, color=data_membcoef.coefname_color, marker=data_membcoef.marker, markersize=model.shares[data_membcoef.class] .* 10 .* nclasses)
             for ii in 1:nrow(data_membcoef)
                 linesegments!(ax_memb, [(data_membcoef.ci_lo[ii], data_membcoef.class[ii] .* nmembcoef .+ i .- nmembcoef), (data_membcoef.ci_hi[ii], data_membcoef.class[ii] .* nmembcoef .+ i .- nmembcoef)], color=data_membcoef.coefname_color[ii])
             end
@@ -409,19 +417,50 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
 
         vlines!(ax_mnl, [0], color=:black, linewidth=3)
         hlines!(ax_mnl, [i * nclasses + 0.5 for i in 1:nmnlcoef], color=:black, linewidth=1)
-        ax_mnl.yticks = (1:nrow(data_mnl), repeat(model.coefnames_mnl, inner=nclasses) .* " - Class " .* string.(repeat(1:nclasses, outer=nmnlcoef)))
-
+        # ax_mnl.yticks = (1:nrow(data_mnl), repeat(model.coefnames_mnl, inner=nclasses) .* " - Class " .* string.(repeat(1:nclasses, outer=nmnlcoef)))
+        ytickindexs = Int64[]
+        yticklabels = Makie.RichText[]
+        
         for (i, c) in enumerate(unique(model_data[model_data.model.==:mnl, :].class))
-            data_class = subset(model_data, :class => x -> x .== c)
-
+            data_class = subset(model_data, :class => x -> x .== c, :model => x -> x .== :mnl)
+            
             scatter!(ax_mnl, data_class.coef, data_class.coefname_index .* nclasses .+ i .- nclasses, color=data_class.coefname_color, marker=data_class.marker, markersize=model.shares[c] * 15 * nclasses)
             for ii in 1:nrow(data_class)
                 linesegments!(ax_mnl, [(data_class.ci_lo[ii], data_class.coefname_index[ii] .* nclasses .+ i .- nclasses), (data_class.ci_hi[ii], data_class.coefname_index[ii] .* nclasses .+ i .- nclasses)], color=data_class.coefname_color[ii])
+                push!(ytickindexs, data_class.coefname_index[ii] .* nclasses .+ i .- nclasses)
+                push!(yticklabels, rich("Class " * string(c) * " - " * data_class.coefname[ii] * get_stars(data_class.p0[ii]), color=get_label_color(data_class.p0[ii], level=level)))
+                # push!(yticklabels, rich(data_class.coefname[ii] * " - Class " * string(c) * get_stars(data_class.p0[ii]), color=get_label_color(data_class.p0[ii], level=level)))
             end
         end
+        ax_mnl.yticks = (ytickindexs, yticklabels)
 
         # text!(repeat([minimum(data_mnl.coef) * 1.2], nmnlcoef), (1:nmnlcoef) .* nclasses .- ((nclasses - 1) / 2), text=model.coefnames_mnl, align=(:left, :center), fontsize=17)
 
         fig
     end
+end
+
+
+# Helper function to get significance stars based on p-value
+function get_stars(p_value::Real)
+    if p_value < 0.001
+        return "***"
+    elseif p_value < 0.01
+        return "**"
+    elseif p_value < 0.05
+        return "*"
+    # Add 0.1 threshold if desired
+    # elseif p_value < 0.1
+    #     return "†" # Or another symbol like "."
+    else
+        return "" # No star
+    end
+end
+
+# Helper function to get label color based on p-value and significance level
+function get_label_color(p_value::Real; level::Real=0.95)
+    # A coefficient is considered insignificant if its p-value is >= the alpha level (1 - confidence level)
+    alpha = 1 - level
+    is_significant = p_value < alpha
+    return is_significant ? :black : :grey
 end
