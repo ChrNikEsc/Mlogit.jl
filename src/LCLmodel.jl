@@ -196,7 +196,7 @@ function RegressionTables.regtable(
     coefbelow_mnl = reshape([RegressionTables.StdError(rrs, i) for i in 1:(n_coef_mnl*nclasses)], n_coef_mnl, nclasses)
     coefbelow_mnl = RegressionTables.repr.(render, coefbelow_mnl)
 
-    coefnames_memb = rrs.coefnames_memb
+    coefnames_memb = use_relabeled_values ? RegressionTables.replace_name.(rrs.coefnames_memb, Ref(labels), Ref(transform_labels)) : rrs.coefnames_memb
     n_coef_memb = Base.length(coefnames_memb)
     coefvalues_memb = reshape([RegressionTables.CoefValue(rrs, i) for i in (n_coef_mnl*nclasses+1):dof(rrs)], n_coef_memb, nclasses - 1)
     coefvalues_memb = RegressionTables.repr.(render, coefvalues_memb)
