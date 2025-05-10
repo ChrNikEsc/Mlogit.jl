@@ -10,6 +10,8 @@ function RegressionTables.other_stats(model::Union{MNLmodel, FMLmodel}, s::Symbo
     end
 end
 
+RegressionTables.default_transform_labels(render::AbstractLatex, rrs) = Dict("&" => "\\&", "%" => "\\%", "\$" => "\\\$", "#" => "\\#", "_" => "\\_", "{" => "\\{", "}" => "\\}", "^" => "\\^")
+
 # RegressionTables.R2McFadden(model::MNLmodel) = r2(model)
 
 
