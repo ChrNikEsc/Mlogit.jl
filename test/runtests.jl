@@ -1,7 +1,7 @@
 using Mlogit
 using Test
 
-using CSV, DataFrames
+using CSV, DataFrames, RegressionTables
 
 const mlogit_datadir = joinpath(dirname(@__FILE__), "..", "data/")
 
@@ -59,10 +59,10 @@ end
 
 
 # lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 3, method=:em)
-# Mlogit.regtable(model_lclogit_em)
 # Mlogit.regtable(model_lclogit_grad)
 
-# model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
+# model_lclogit_em = lclogit(@formula(choice ~ pf + cl + loc + wk + tod + seas + membership(x1_1)), df_lclogit, 7, method=:em, varname_samplesplit=:samplesplit)
+# regtable(model_lclogit_em; render=LatexTable())
 # Mlogit.coefplot(model_lclogit_em)
 # Mlogit.coefplot(model_lclogit_em, by=:coef)
 # Mlogit.coefplot(model_lclogit_grad)

@@ -174,16 +174,22 @@ function RegressionTables.regtable(
     rrs::LCLmodel;
     renderSettings=nothing,
     render::T=RegressionTables.default_render(renderSettings, rrs),
+    labels::Dict{String,String}=RegressionTables.default_labels(render, rrs),
     align::Symbol=RegressionTables.default_align(render),
     regression_statistics=RegressionTables.default_regression_statistics(render, rrs),
+    transform_labels::Union{Dict,Symbol}=RegressionTables.default_transform_labels(render, rrs),
     digits_stats=nothing,
     estimformat=nothing,
-    statisticformat=nothing
+    statisticformat=nothing,
+    use_relabeled_values=RegressionTables.default_use_relabeled_values(render, rrs),
 ) where {T<:AbstractRenderType}
+    if isa(transform_labels, Symbol)
+        transform_labels = RegressionTables._escape(transform_labels)
+    end
 
     nclasses = rrs.nclasses
 
-    coefnames_mnl = rrs.coefnames_mnl
+    coefnames_mnl = use_relabeled_values ? RegressionTables.replace_name.(rrs.coefnames_mnl, Ref(labels), Ref(transform_labels)) : rrs.coefnames_mnl
     n_coef_mnl = Base.length(coefnames_mnl)
     coefvalues_mnl = reshape([RegressionTables.CoefValue(rrs, i) for i in 1:(n_coef_mnl*nclasses)], n_coef_mnl, nclasses)
     coefvalues_mnl = RegressionTables.repr.(render, coefvalues_mnl)
