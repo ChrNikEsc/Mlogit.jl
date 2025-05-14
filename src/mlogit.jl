@@ -35,7 +35,7 @@ function StatsAPI.fit(::Type{MNLmodel},
     df = DataFrame(df; copycols=false)
     nrows::Int64 = size(df, 1)
 
-    mat_X, vec_choice, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema =
+    mat_X, vec_choice, vec_id, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema =
         prepare_mlogit_inputs(formula, df, indices, weights, start, equal_lambdas)
 
     if !nested
@@ -106,6 +106,9 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     n_coefficients::Int64 = Base.length(coef_names)
     n_id::Int64 = Base.length(unique(df[!, indices.id]))
 
+    vec_id::Vector{Int64} = df[!, indices.id]
+    remap_to_indices_chid!(vec_id)
+
     vec_chid::Vector{Int64} = df[!, indices.chid]
     remap_to_indices_chid!(vec_chid)
     n_chid::Int64 = Base.length(unique(vec_chid))
@@ -123,7 +126,7 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
         start
     end
 
-    return (mat_X, vec_choice, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema)
+    return (mat_X, vec_choice, vec_id, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema)
 end
 
 # No nests
@@ -169,7 +172,7 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
             log_util_set = @view tmp_mul[alt_indices]
 
             # Compute the log-denominator for this choice set using logsumexp for numerical stability
-            log_denom[c] = LogExpFunctions.logsumexp(log_util_set) # sexb[c] now stores the log-denominator for choice set 'c'
+            log_denom[c] = LogExpFunctions.logsumexp(log_util_set)
         end
 
         log_Pni .= tmp_mul .- log_denom[vec_chid] # exb now stores log(Pni) for each alternative
