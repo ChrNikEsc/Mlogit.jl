@@ -137,9 +137,9 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
 
     # Initialize objects used within fgh! - these will be repurposed for stable calculations
     # exb will be repurposed to store log(Pni). Initial value doesn't matter as it's overwritten.
-    exb::Vector{Float64} = similar(tmp_mul) # Original initialization: exp.(mat_X * coef_start) - removing to avoid redundant exp
+    log_Pni::Vector{Float64} = similar(tmp_mul) # Original initialization: exp.(mat_X * coef_start) - removing to avoid redundant exp
     # sexb will be repurposed to store log-denominators per choice set.
-    sexb::Vector{Float64} = zeros(Float64, n_chid) # Original initialization
+    log_denom::Vector{Float64} = zeros(Float64, n_chid) # Original initialization
     # Pni will be repurposed to store stable probabilities.
     Pni::Vector{Float64} = zeros(Float64, Base.length(vec_chid)) # Original initialization
 
@@ -154,7 +154,6 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
 
     # Precompute unique choice set IDs (used in the choice set loop within fgh!)
     unique_chids = unique(vec_chid)
-    # sexb will be repurposed to store log-denominators per choice set.
 
     function fgh!(F, G, H, theta::Vector{Float64})
         # Common computations within the optimization step
@@ -170,23 +169,21 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
             log_util_set = @view tmp_mul[alt_indices]
 
             # Compute the log-denominator for this choice set using logsumexp for numerical stability
-            sexb[c] = LogExpFunctions.logsumexp(log_util_set) # sexb[c] now stores the log-denominator for choice set 'c'
+            log_denom[c] = LogExpFunctions.logsumexp(log_util_set) # sexb[c] now stores the log-denominator for choice set 'c'
         end
 
-        exb .= tmp_mul .- sexb[vec_chid] # exb now stores log(Pni) for each alternative
+        log_Pni .= tmp_mul .- log_denom[vec_chid] # exb now stores log(Pni) for each alternative
 
-        Pni .= exp.(exb)
+        Pni .= exp.(log_Pni)
 
         if !(isnothing(G) && isnothing(H))
             # If G or H is required by the optimizer, calculate terms needed for both.
-            # These calculations now use the stable Pni.
-            # Fill Px and yx based on the stable probabilities and chosen alternatives.
             fill!(Px, zero(eltype(theta))) # Px[j, c] = sum over alternatives i in set c of Pni[i] * mat_X[i, j]
             fill!(yx, zero(eltype(theta))) # yx[j, c] = sum over chosen alternatives i in set c of mat_X[i, j]
 
             @inbounds for i in eachindex(vec_chid), j in eachindex(theta)
                 # Accumulate contributions per choice set (indexed by vec_chid[i])
-                Px[j, vec_chid[i]] += Pni[i] * mat_X[i, j] # Use stable Pni
+                Px[j, vec_chid[i]] += Pni[i] * mat_X[i, j]
                 yx[j, vec_chid[i]] += vec_choice[i] * mat_X[i, j] # vec_choice[i] is 1 if chosen, 0 otherwise
             end
 
@@ -195,14 +192,9 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
             dxpx_Pni .= zero(eltype(theta)) # dimensions num_alternatives x num_coefficients
 
             @inbounds for i in eachindex(vec_chid), j in eachindex(theta)
-                dxpx[i, j] = mat_X[i, j] - Px[j, vec_chid[i]] # Px uses stable Pni
-                dxpx_Pni[i, j] = dxpx[i, j] * Pni[i] # Multiply by stable Pni
+                dxpx[i, j] = mat_X[i, j] - Px[j, vec_chid[i]]
+                dxpx_Pni[i, j] = dxpx[i, j] * Pni[i]
             end
-
-            # Original gradi calculation: gradi .= (yx .- Px)' .* vec_weights_choice
-            # Assuming vec_weights_choice weights choice sets here (size n_chid)
-            # (yx - Px)' has dimensions (n_chid, num_coefficients). gradi has dimensions (n_chid, num_coefficients).
-            # This fits the original structure.
 
             @inbounds for c in 1:n_chid
                 @inbounds for j in eachindex(theta)
@@ -214,19 +206,11 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
 
 
         if G !== nothing
-            # Compute gradient using gradi (which uses stable Px, yx, and Pni)
-            # Original G calculation: G .= -vec(sum(gradi, dims=1))
             # gradi has dimensions (n_chid, num_coefficients). Sum over dim 1 results in (1, num_coefficients).
             G .= -vec(sum(gradi, dims=1)) # Apply original negative sign.
-
-
         end
 
         if H !== nothing
-            # Hessian calculation using stable dxpx_Pni and dxpx
-            # Original H calculation: H .+= dxpx_Pni[idx_map[c], :]' * dxpx[idx_map[c], :] * vec_weights_choice[c] (assuming weight per set)
-            # The calculation of dxpx and dxpx_Pni is done in the block above if G or H is requested.
-
             H .= zero(eltype(theta)) # dimensions num_coefficients x num_coefficients
             # Assuming vec_weights_choice weights choice sets based on original H loop index 'i' (which corresponds to chid).
             @inbounds @simd for c in 1:n_chid
@@ -241,21 +225,11 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
                 # The product sum for the Hessian contribution of set c is dxpx_Pni_set' * dxpx_set
                 H .+= weight_c * dxpx_Pni_set' * dxpx_set # Accumulate weighted Hessian contribution per choice set
             end
-            # This makes the original Hessian calculation stable using Pni and weights per choice set.
-
-
         end
 
         if F !== nothing
-            # Compute negative log-likelihood stably using the log-probabilities (stored in exb)
-            # Negative log-likelihood is -sum over chosen alternatives of weighted log(Pni)
-            # Get indices of chosen alternatives across all alternatives
-            chosen_indices = findall(vec_choice)
-
             # Sum over chosen alternatives i of - vec_weights_choice[i] * log_Pni[i]
-            # exb stores log_Pni. vec_weights_choice is per alternative.
-            # chosen_indices gives the indices of chosen alternatives in the full list of alternatives.
-            neg_log_lik = -sum(vec_weights_choice .* exb[chosen_indices]) # Use exb (log_Pni)
+            neg_log_lik = -sum(vec_weights_choice .* log_Pni[vec_choice])
 
             return neg_log_lik
         end
