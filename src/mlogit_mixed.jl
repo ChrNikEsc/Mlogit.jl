@@ -29,7 +29,16 @@ function fit_mlogit(
     vec_chid::Vector{Int64},
     vec_weights_chid::Vector{Float64},
     draws::Tuple{Int, Union{Symbol, String}};
-    optim_options=Optim.Options(extended_trace=true, show_trace=false, store_trace=true)
+    optim_options=Optim.Options(
+        extended_trace=true,
+        show_trace=false,
+        store_trace=true,
+        f_abstol=-1,# in tests with Train's data, this led to premature convergence even if at 0 when starting values were not perfect
+        f_reltol=-1,
+        # x_abstol=-1,
+        # x_reltol=-1,
+        # g_abstol=1e-15
+        )
 )
     n_id::Int64 = maximum(vec_id)
     n_chid::Int64 = maximum(vec_chid)

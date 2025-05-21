@@ -50,7 +50,7 @@ function StatsAPI.fit(::Type{MNLmodel},
         opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values, nests = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_chid, vec_nests, equal_lambdas; optim_options=optim_options)
     elseif mixed & !nested
         @warn("Ignoring Optim.Options() if provided. Must ensure that extended_trace=true and store_trace=true.")
-        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, randdist, coef_start, vec_id, vec_chid, vec_weights_chid, draws; optim_options=Optim.Options(extended_trace=true, show_trace=false, store_trace=true))
+        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, randdist, coef_start, vec_id, vec_chid, vec_weights_chid, draws)
     else
         error("Mixed logit with nests is not implemented.")
     end
@@ -146,11 +146,24 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     vec_weights_chid = vec_weights[vec_choice]
 
     coef_start::Vector{Float64} = if isnothing(start)
-        [zeros(Float64, n_coefficients_util); ones(Float64, nested * (equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests))))]
+        if !nested && !mixed
+            zeros(Float64, n_coefficients_util)
+        elseif nested && !mixed
+            [zeros(Float64, n_coefficients_util); ones(Float64, equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests)))]
+        elseif !nested && mixed
+            vcat(
+            zeros(Float64, length(coefnames_utility[randdist.==nothing])),
+            [1 * rand(1)[1] - 1 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs, with Train's sample data, this produced very good results in the majority of tries. DOWNSIDE: have two make few tries and then take the best model
+            # [0.0 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs
+            [0.01 for idx in eachindex(randdist) if !isnothing(randdist[idx])] # w random coefs
+        )
+        else
+            zeros(Float64, n_coefficients)
+        end
     else
         start
     end
-
+# display(coef_start)
     return mat_X, vec_choice, randdist, vec_id, vec_chid, vec_weights_chid, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema
 end
 
