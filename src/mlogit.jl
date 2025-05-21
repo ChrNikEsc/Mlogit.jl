@@ -153,7 +153,7 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
         elseif !nested && mixed
             vcat(
             zeros(Float64, length(coefnames_utility[randdist.==nothing])),
-            [1 * rand(1)[1] - 1 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs, with Train's sample data, this produced very good results in the majority of tries. DOWNSIDE: have two make few tries and then take the best model
+            [1 * rand(1)[1] - 0.5 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs, with Train's sample data, this produced very good results in the majority of tries. DOWNSIDE: have two make few tries and then take the best model
             # [0.0 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs
             [0.01 for idx in eachindex(randdist) if !isnothing(randdist[idx])] # w random coefs
         )
