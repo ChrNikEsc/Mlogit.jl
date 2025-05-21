@@ -8,8 +8,8 @@ function mlogit(
     # specific to nested logit
     equal_lambdas::Bool=false,
     # specifitic to mixed logit
-    randdist::Union{Nothing, Vector{Union{Nothing, Symbol}}}=nothing,
-    draws::Tuple{Int64, Union{Symbol, String}}=(100, :MLHS),
+    randdist::Union{Nothing,Vector{Union{Nothing,Symbol}}}=nothing,
+    draws::Tuple{Int64,Union{Symbol,String}}=(100, :MLHS),
     optim_options=Optim.Options()
 )
     StatsAPI.fit(MNLmodel, formula, df; vcov_type=vcov_type, weights=weights, start=start, indices=indices, equal_lambdas=equal_lambdas, randdist=randdist, draws=draws, optim_options=optim_options)
@@ -25,8 +25,8 @@ function StatsAPI.fit(::Type{MNLmodel},
     # specific to nested logit
     equal_lambdas::Bool=false,
     # specifitic to mixed logit
-    randdist::Union{Nothing, Vector{Union{Nothing, Symbol}}}=nothing,
-    draws::Tuple{Int64, Union{Symbol, String}}=(100, :MLHS),
+    randdist::Union{Nothing,Vector{Union{Nothing,Symbol}}}=nothing,
+    draws::Tuple{Int64,Union{Symbol,String}}=(100, :MLHS),
     optim_options=Optim.Options()
 )
 
@@ -94,7 +94,7 @@ end
 function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     weights::Union{Symbol,Nothing}, start::Union{Nothing,Vector{Float64}},
     equal_lambdas::Bool,
-    randdist::Union{Nothing, Vector{Union{Nothing, Symbol}}})# TODO: Should be inferred from formula later
+    randdist::Union{Nothing,Vector{Union{Nothing,Symbol}}})# TODO: Should be inferred from formula later
 
     formula_origin = formula
     formula, formula_nests = parse_nests(formula_origin)
@@ -115,14 +115,14 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     end
 
     coef_names::Vector{String} = if nested && !mixed
-       vcat(coefnames_utility, coefnames_nests)
+        vcat(coefnames_utility, coefnames_nests)
     elseif !nested && !mixed
-       coefnames_utility
+        coefnames_utility
     elseif !nested && mixed
         vcat(
-            coefnames_utility[randdist .== nothing],
-            "b_" .* coefnames_utility[randdist .!= nothing],
-            "w_" .* coefnames_utility[randdist .!= nothing]
+            coefnames_utility[randdist.==nothing],
+            ["b_" * string(randdist[idx]) * "_" * string(coefnames_utility[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])],
+            ["w_" * string(randdist[idx]) * "_" * string(coefnames_utility[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])]
         )
     else
         error("Mixed logit with nests is not implemented.")
@@ -150,7 +150,7 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     else
         start
     end
-    
+
     return mat_X, vec_choice, randdist, vec_id, vec_chid, vec_weights_chid, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema
 end
 

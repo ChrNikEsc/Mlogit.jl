@@ -44,7 +44,7 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
         df_mlogit;
         weights=:weight
     )
-    
+
     @test sum(model_mlogit.coef) ≈ -10.368346014522867
 
     # nlogit
