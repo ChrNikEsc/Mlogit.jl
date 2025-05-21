@@ -1,30 +1,36 @@
 function mlogit(
     formula::FormulaTerm,
-    df,
-    vcov_type::CovarianceEstimator=Vcov.simple();
+    df;
+    vcov_type::CovarianceEstimator=Vcov.simple(),
     weights::Union{Symbol,Nothing}=nothing,
     start::Union{Nothing,Vector{Float64}}=nothing,
     indices::XlogitIndices=xlogit_indices(),
-    method=nothing,
     # specific to nested logit
     equal_lambdas::Bool=false,
-    optim_options=Optim.Options(),
+    # specifitic to mixed logit
+    randdist::Union{Nothing, Vector{Union{Nothing, Symbol}}}=nothing,
+    draws::Tuple{Int64, Union{Symbol, String}}=(100, :MLHS),
+    optim_options=Optim.Options()
 )
-    StatsAPI.fit(MNLmodel, formula, df, vcov_type; weights=weights, start=start, indices=indices, method=method, equal_lambdas=equal_lambdas, optim_options=optim_options)
+    StatsAPI.fit(MNLmodel, formula, df; vcov_type=vcov_type, weights=weights, start=start, indices=indices, equal_lambdas=equal_lambdas, randdist=randdist, draws=draws, optim_options=optim_options)
 end
 
 function StatsAPI.fit(::Type{MNLmodel},
     formula::FormulaTerm,
-    df,
-    vcov_type::CovarianceEstimator=Vcov.simple();
+    df;
+    vcov_type::CovarianceEstimator=Vcov.simple(),
     weights::Union{Symbol,Nothing}=nothing,
     start::Union{Nothing,Vector{Float64}}=nothing,
     indices::XlogitIndices=xlogit_indices(),
-    method=nothing,
     # specific to nested logit
     equal_lambdas::Bool=false,
+    # specifitic to mixed logit
+    randdist::Union{Nothing, Vector{Union{Nothing, Symbol}}}=nothing,
+    draws::Tuple{Int64, Union{Symbol, String}}=(100, :MLHS),
     optim_options=Optim.Options()
 )
+
+    mixed::Bool = !isnothing(randdist)
 
     if vcov_type != Vcov.simple()
         throw("Other types of covariance estimators than Vcov.simple() are not yet implemented. Use robust_cluster_vcov() post-estimation.")
@@ -35,13 +41,18 @@ function StatsAPI.fit(::Type{MNLmodel},
     df = DataFrame(df; copycols=false)
     nrows::Int64 = size(df, 1)
 
-    mat_X, vec_choice, vec_id, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema =
-        prepare_mlogit_inputs(formula, df, indices, weights, start, equal_lambdas)
+    mat_X, vec_choice, randdist, vec_id, vec_chid, vec_weights_chid, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema =
+        prepare_mlogit_inputs(formula, df, indices, weights, start, equal_lambdas, randdist)
 
-    if !nested
-        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice; optim_options=optim_options)
+    if !nested & !mixed
+        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_chid; optim_options=optim_options)
+    elseif nested & !mixed
+        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values, nests = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_chid, vec_nests, equal_lambdas; optim_options=optim_options)
+    elseif mixed & !nested
+        @warn("Ignoring Optim.Options() if provided. Must ensure that extended_trace=true and store_trace=true.")
+        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, randdist, coef_start, vec_id, vec_chid, vec_weights_chid, draws; optim_options=Optim.Options(extended_trace=true, show_trace=false, store_trace=true))
     else
-        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values, nests = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_choice, vec_nests, equal_lambdas; optim_options=optim_options)
+        error("Mixed logit with nests is not implemented.")
     end
 
     vcov = inv(hessian)
@@ -82,7 +93,8 @@ end
 
 function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     weights::Union{Symbol,Nothing}, start::Union{Nothing,Vector{Float64}},
-    equal_lambdas::Bool)
+    equal_lambdas::Bool,
+    randdist::Union{Nothing, Vector{Union{Nothing, Symbol}}})# TODO: Should be inferred from formula later
 
     formula_origin = formula
     formula, formula_nests = parse_nests(formula_origin)
@@ -90,7 +102,8 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     formula_schema = apply_schema(formula, s)
     vec_choice::BitVector, mat_X::Matrix{Float64} = StatsModels.modelcols(formula_schema, df)
     response_name::String, coefnames_utility::Vector{String} = coefnames(formula_schema)
-    nested = formula_nests != FormulaTerm(ConstantTerm(0), ConstantTerm(0))
+    nested::Bool = formula_nests != FormulaTerm(ConstantTerm(0), ConstantTerm(0))
+    mixed::Bool = !isnothing(randdist)
     vec_nests::Vector{String} = nested ? df[:, nestssymbol(only(formula_nests.rhs))] : repeat(["x"], inner=Base.length(vec_choice))
 
     coefnames_nests::Vector{String} = if !nested
@@ -101,7 +114,19 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
         ["lambda_$k" for k in filter(x -> !ismissing(x) && !isnothing(x) && x != 0, unique(vec_nests))]
     end
 
-    coef_names::Vector{String} = nested ? vcat(coefnames_utility, coefnames_nests) : coefnames_utility
+    coef_names::Vector{String} = if nested && !mixed
+       vcat(coefnames_utility, coefnames_nests)
+    elseif !nested && !mixed
+       coefnames_utility
+    elseif !nested && mixed
+        vcat(
+            coefnames_utility[randdist .== nothing],
+            "b_" .* coefnames_utility[randdist .!= nothing],
+            "w_" .* coefnames_utility[randdist .!= nothing]
+        )
+    else
+        error("Mixed logit with nests is not implemented.")
+    end
     n_coefficients_util::Int64 = Base.length(coefnames_utility)
     n_coefficients::Int64 = Base.length(coef_names)
     n_id::Int64 = Base.length(unique(df[!, indices.id]))
@@ -118,24 +143,24 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
                                    let w::Vector{Float64} = df[!, weights]
         (w ./ sum(w)) .* Base.length(vec_choice)
     end
-    vec_weights_choice = vec_weights[vec_choice]
+    vec_weights_chid = vec_weights[vec_choice]
 
     coef_start::Vector{Float64} = if isnothing(start)
         [zeros(Float64, n_coefficients_util); ones(Float64, nested * (equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests))))]
     else
         start
     end
-
-    return (mat_X, vec_choice, vec_id, vec_chid, vec_weights_choice, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema)
+    
+    return mat_X, vec_choice, randdist, vec_id, vec_chid, vec_weights_chid, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema
 end
 
 # No nests
-function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::Vector{Float64}, vec_chid::Vector{Int64}, vec_weights_choice::Vector{Float64}; method=Newton(), optim_options=Optim.Options())
+function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::Vector{Float64}, vec_chid::Vector{Int64}, vec_weights_chid::Vector{Float64}; method=Newton(), optim_options=Optim.Options())
 
     tmp_mul = similar(vec_chid, Float64, size(mat_X, 1)) # Temporary storage for X*theta
 
     n_chid::Int64 = Base.length(unique(vec_chid)) # Number of unique choice sets
-    idx_map = create_index_map(vec_chid) # Maps choice set ID to indices of alternatives in mat_X (Assuming this function is defined elsewhere)
+    idx_map = create_index_map(vec_chid) # Maps choice set ID to indices of alternatives in mat_X
     n_coefficients::Int64 = Base.length(coef_start) # Number of parameters
 
     # Initialize objects used within fgh! - these will be repurposed for stable calculations
@@ -201,7 +226,7 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
 
             @inbounds for c in 1:n_chid
                 @inbounds for j in eachindex(theta)
-                    gradi[c, j] = (yx[j, c] - Px[j, c]) * vec_weights_choice[c] # Use stable Px and yx, assume vec_weights_choice[c] is weight for set c
+                    gradi[c, j] = (yx[j, c] - Px[j, c]) * vec_weights_chid[c] # Use stable Px and yx, assume vec_weights_chid[c] is weight for set c
                 end
             end
 
@@ -215,10 +240,10 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
 
         if H !== nothing
             H .= zero(eltype(theta)) # dimensions num_coefficients x num_coefficients
-            # Assuming vec_weights_choice weights choice sets based on original H loop index 'i' (which corresponds to chid).
+            # Assuming vec_weights_chid weights choice sets based on original H loop index 'i' (which corresponds to chid).
             @inbounds @simd for c in 1:n_chid
-                # Assuming vec_weights_choice[c] is the weight for choice set c
-                weight_c = vec_weights_choice[c] # This implies weights are per choice set.
+                # Assuming vec_weights_chid[c] is the weight for choice set c
+                weight_c = vec_weights_chid[c] # This implies weights are per choice set.
                 # Get the indices for alternatives in choice set c
                 alt_indices_in_set = idx_map[c]
                 # Get the relevant parts of dxpx_Pni and dxpx for this choice set
@@ -231,8 +256,8 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
         end
 
         if F !== nothing
-            # Sum over chosen alternatives i of - vec_weights_choice[i] * log_Pni[i]
-            neg_log_lik = -sum(vec_weights_choice .* log_Pni[vec_choice])
+            # Sum over chosen alternatives i of - vec_weights_chid[i] * log_Pni[i]
+            neg_log_lik = -sum(vec_weights_chid .* log_Pni[vec_choice])
 
             return neg_log_lik
         end
@@ -277,7 +302,7 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
 end
 
 # With nests
-function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::Vector{Float64}, vec_chid::Vector{Int64}, vec_weights_choice, vec_nests, equal_lambdas; method=LBFGS(linesearch=LineSearches.BackTracking()), optim_options=Optim.Options())
+function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::Vector{Float64}, vec_chid::Vector{Int64}, vec_weights_chid, vec_nests, equal_lambdas; method=LBFGS(linesearch=LineSearches.BackTracking()), optim_options=Optim.Options())
 
     # Nests
     # transform vec_nest such that 0 means an alternative is in its own nest (don't estimate lambda)..
@@ -373,7 +398,7 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
                         end
                     end
 
-                    gradi[j, g] += vec_weights_choice[j] * tmp_g * precomputed_multiplication[j]
+                    gradi[j, g] += vec_weights_chid[j] * tmp_g * precomputed_multiplication[j]
                 end
 
                 # Compute gradient for lambdas
@@ -383,10 +408,10 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
                         tmp_g = -(choice_prob[j] * V_choice[j]) / lambda[n]^2
                         tmp_g += choice_prob[j] * (-((-1 + lambda[n]) * exp_adj_V_times_V_nestsums[j, n]) / (lambda[n]^2 * vec_sum_chid_nest[j]) + safe_log(vec_sum_chid_nest[j]))
                         tmp_g += (exp_adj_V_choice[j] * safe_exp(vec_sum_chid_nest[j], -2 + 2 * lambda[n]) * (exp_adj_V_times_V_nestsums[j, n] - lambda[n] * vec_sum_chid_nest[j] * safe_log(vec_sum_chid_nest[j]))) / (lambda[n] * sum_sum_chid_nest_ttl[j]^2)
-                        gradi_lambda[j, g] += vec_weights_choice[j] * tmp_g * precomputed_multiplication[j]
+                        gradi_lambda[j, g] += vec_weights_chid[j] * tmp_g * precomputed_multiplication[j]
                     else
-                        # gradi_lambda[j, g] += vec_weights_choice[j] * (sum_chid_nest[j, n]^(-1 + lambda[n]) * (exp_adj_V_times_V_nestsums[j, n] - lambda[n] * sum_chid_nest[j, n] * safe_log(sum_chid_nest[j, n]))) / (lambda[n] * sum_sum_chid_nest_ttl[j])
-                        gradi_lambda[j, g] += vec_weights_choice[j] * (safe_exp(sum_chid_nest[j, n], -1 + lambda[n]) * (exp_adj_V_times_V_nestsums[j, n] - lambda[n] * sum_chid_nest[j, n] * safe_log(sum_chid_nest[j, n]))) / (lambda[n] * sum_sum_chid_nest_ttl[j])
+                        # gradi_lambda[j, g] += vec_weights_chid[j] * (sum_chid_nest[j, n]^(-1 + lambda[n]) * (exp_adj_V_times_V_nestsums[j, n] - lambda[n] * sum_chid_nest[j, n] * safe_log(sum_chid_nest[j, n]))) / (lambda[n] * sum_sum_chid_nest_ttl[j])
+                        gradi_lambda[j, g] += vec_weights_chid[j] * (safe_exp(sum_chid_nest[j, n], -1 + lambda[n]) * (exp_adj_V_times_V_nestsums[j, n] - lambda[n] * sum_chid_nest[j, n] * safe_log(sum_chid_nest[j, n]))) / (lambda[n] * sum_sum_chid_nest_ttl[j])
                     end
                 end
             end
@@ -400,7 +425,7 @@ function fit_mlogit(mat_X::Matrix{Float64}, vec_choice::BitVector, coef_start::V
         end
 
         if F !== nothing
-            return -sum(vec_weights_choice .* log.(choice_prob))
+            return -sum(vec_weights_chid .* log.(choice_prob))
         end
     end
 

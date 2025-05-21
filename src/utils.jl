@@ -317,3 +317,60 @@ function parse_membership(@nospecialize(f::FormulaTerm), n_classes)
         return f, FormulaTerm(ConstantTerm(0), ConstantTerm(0))
     end
 end
+
+
+
+
+
+
+
+
+# syntax: best practice to define a _new_ function
+# random(var, dist) = var
+
+# type of model where syntax applies: here this applies to any model type
+const RANDOM_CONTEXT = Any
+
+struct RandCoefTerm{T<:AbstractTerm, D<:UnivariateDistribution} <: AbstractTerm
+    term::T
+    dist_type::Type{D} # Field stores the type object (e.g., Normal), D is the actual distribution type
+end
+
+
+Base.show(io::IO, r::RandCoefTerm) = print(io, "Var ($(r.var), $(r.dist))")
+
+# for `poly` use at run-time (outside @formula), return a schema-less PolyTerm
+random(v, d) = RandCoefTerm(term(v), d)
+
+# for `poly` use inside @formula: create a schemaless PolyTerm and apply_schema
+function StatsModels.apply_schema(t::FunctionTerm{typeof(random)},
+                                  sch::StatsModels.Schema,
+                                  Mod::Type{<:RANDOM_CONTEXT})
+    apply_schema(RandCoefTerm(t.args...), sch, Mod)
+end
+
+# apply_schema to internal Terms and check for proper types
+function StatsModels.apply_schema(t::RandCoefTerm,
+                                  sch::StatsModels.Schema,
+                                  Mod::Type{<:RANDOM_CONTEXT})
+    var = apply_schema(t.var, sch, Mod)
+    # isa(term, ContinuousTerm) ||
+    #     throw(ArgumentError("PolyTerm only works with continuous terms (got $term)"))
+    # isa(t.deg, ConstantTerm) ||
+    #     throw(ArgumentError("PolyTerm degree must be a number (got $t.deg)"))
+    RandCoefTerm(var, t.dist_type)
+end
+
+function StatsModels.modelcols(r::RandCoefTerm, d::NamedTuple)
+    modelcols(r.var, d)
+end
+
+# the basic terms contained within a PolyTerm (for schema extraction)
+StatsModels.terms(r::RandCoefTerm) = terms(r.var)
+# names variables from the data that a PolyTerm relies on
+StatsModels.termvars(r::RandCoefTerm) = StatsModels.termvars(r.var)
+# number of columns in the matrix this term produces
+StatsModels.width(r::RandCoefTerm) = StatsModels.width(r.var)
+
+StatsAPI.coefnames(r::RandCoefTerm) = coefnames(r.var) .* "-" .* string.(fieldnames(r.dist))
+

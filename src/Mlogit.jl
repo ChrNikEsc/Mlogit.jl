@@ -4,11 +4,13 @@ using DataFrames, Pipe#, BenchmarkTools, Profile
 
 using Reexport
 @reexport using StatsModels
+@reexport using Random
+@reexport using Distributions
 
-using StatsBase, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Distributions, Combinatorics
+using StatsBase, StatsAPI, Optim, RegressionTables, DataStructures, Vcov, Combinatorics
 using Makie, CairoMakie, ColorSchemes
 using StaticArrays
-using Optim, Distributions, LineSearches
+using LineSearches
 using ForwardDiff
 using DiffResults
 using FiniteDifferences
@@ -19,6 +21,9 @@ import LogExpFunctions
 # using CategoricalArrays # used to be in lclogit.jl but might no longer be necessary
 # using ColorSchemes # used to be in lclogit.jl but might no longer be necessary
 using Printf
+using Primes
+using Sobol
+using StatsFuns
 
 # import Base.length # used to be in lclogit.jl but might no longer be necessary
 
@@ -27,10 +32,11 @@ export LCLmodel
 
 export mlogit
 export nests
+export membership
+export random
 export fmlogit
 export lclmodel
 export lclogit
-export membership
 export robust_cluster_vcov
 export coefplot
 
@@ -42,5 +48,6 @@ include("LCLmodel.jl")
 include("mlogit.jl")
 include("fmlogit.jl")
 include("lclogit.jl")
+include("mlogit_mixed.jl")
 
 end
