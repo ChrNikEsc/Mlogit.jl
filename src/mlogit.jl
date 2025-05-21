@@ -10,9 +10,10 @@ function mlogit(
     # specifitic to mixed logit
     randdist::Union{Nothing,Vector{Union{Nothing,Symbol}}}=nothing,
     draws::Tuple{Int64,Union{Symbol,String}}=(100, :MLHS),
+    standardize::Bool=true,
     optim_options=Optim.Options()
 )
-    StatsAPI.fit(MNLmodel, formula, df; vcov_type=vcov_type, weights=weights, start=start, indices=indices, equal_lambdas=equal_lambdas, randdist=randdist, draws=draws, optim_options=optim_options)
+    StatsAPI.fit(MNLmodel, formula, df; vcov_type=vcov_type, weights=weights, start=start, indices=indices, equal_lambdas=equal_lambdas, randdist=randdist, draws=draws, standardize=standardize, optim_options=optim_options)
 end
 
 function StatsAPI.fit(::Type{MNLmodel},
@@ -27,6 +28,7 @@ function StatsAPI.fit(::Type{MNLmodel},
     # specifitic to mixed logit
     randdist::Union{Nothing,Vector{Union{Nothing,Symbol}}}=nothing,
     draws::Tuple{Int64,Union{Symbol,String}}=(100, :MLHS),
+    standardize::Bool=true,
     optim_options=Optim.Options()
 )
 
@@ -44,6 +46,13 @@ function StatsAPI.fit(::Type{MNLmodel},
     mat_X, vec_choice, randdist, vec_id, vec_chid, vec_weights_chid, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema =
         prepare_mlogit_inputs(formula, df, indices, weights, start, equal_lambdas, randdist)
 
+    if standardize
+        mat_X_mean = mean(mat_X, dims=1)
+        mat_X .-= mat_X_mean
+        mat_X_std = std(mat_X, dims=1)
+        mat_X ./= mat_X_std
+    end
+
     if !nested & !mixed
         opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_chid; optim_options=optim_options)
     elseif nested & !mixed
@@ -53,6 +62,23 @@ function StatsAPI.fit(::Type{MNLmodel},
         opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, randdist, coef_start, vec_id, vec_chid, vec_weights_chid, draws)
     else
         error("Mixed logit with nests is not implemented.")
+    end
+
+    if standardize
+        # try
+        mat_X_std_ext::Vector{Float64} = similar(mat_X_std, Float64, n_coefficients)
+        if mixed
+            mat_X_std_ext = vcat(vec(mat_X_std)[randdist.==nothing], vec(mat_X_std)[randdist.!=nothing], vec(mat_X_std)[randdist.!=nothing])
+        else
+            mat_X_std_ext = vcat(vec(mat_X_std), ones(n_coefficients - size(mat_X_std, 2)))
+        end
+        coefficients ./= mat_X_std_ext
+        gradient .*= mat_X_std_ext
+        estfun .*= mat_X_std_ext'
+        hessian = (diagm(mat_X_std_ext) * hessian * diagm(mat_X_std_ext))
+        # catch e
+        #     @warn "Reverting Standardization failed. Reporting standardized coefficients, gradient and Hessian as is."
+        # end
     end
 
     vcov = inv(hessian)
@@ -119,10 +145,20 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     elseif !nested && !mixed
         coefnames_utility
     elseif !nested && mixed
-        vcat(
-            coefnames_utility[randdist.==nothing],
-            ["b_" * string(randdist[idx]) * "_" * string(coefnames_utility[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])],
-            ["w_" * string(randdist[idx]) * "_" * string(coefnames_utility[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])]
+        # tmp_cn = String[]
+        # for idx in eachindex(randdist)
+        #     if isnothing(randdist[idx])
+        #         push!(tmp_cn, coefnames_utility[idx])
+        #     else
+        #         push!(tmp_cn, string(coefnames_utility[idx]) * " b " * string(randdist[idx]))
+        #         push!(tmp_cn, string(coefnames_utility[idx]) * " w " * string(randdist[idx]))
+        #     end
+        # end
+        # coef_names = tmp_cn
+        vcat(coefnames_utility[randdist.==nothing],
+            [string(coefnames_utility[idx]) * " b " * string(randdist[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])],
+            [string(coefnames_utility[idx]) * " w " * string(randdist[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])]
+            # ["w_" * string(randdist[idx]) * "_" * string(coefnames_utility[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])]
         )
     else
         error("Mixed logit with nests is not implemented.")
@@ -152,18 +188,17 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
             [zeros(Float64, n_coefficients_util); ones(Float64, equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests)))]
         elseif !nested && mixed
             vcat(
-            zeros(Float64, length(coefnames_utility[randdist.==nothing])),
-            [1 * rand(1)[1] - 0.5 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs, with Train's sample data, this produced very good results in the majority of tries. DOWNSIDE: have two make few tries and then take the best model
-            # [0.0 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs
-            [0.01 for idx in eachindex(randdist) if !isnothing(randdist[idx])] # w random coefs
-        )
+                zeros(Float64, length(coefnames_utility[randdist.==nothing])),
+                [0.0 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs
+                [0.01 for idx in eachindex(randdist) if !isnothing(randdist[idx])] # w random coefs
+            )
         else
             zeros(Float64, n_coefficients)
         end
     else
         start
     end
-# display(coef_start)
+    # display(coef_start)
     return mat_X, vec_choice, randdist, vec_id, vec_chid, vec_weights_chid, vec_nests, coef_start, coef_names, n_coefficients, n_id, n_chid, nested, formula, formula_origin, formula_schema
 end
 

@@ -42,7 +42,8 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
     model_mlogit = mlogit(
         @formula(choice ~ pf + cl + loc + wk + tod + seas),
         df_mlogit;
-        weights=:weight
+        weights=:weight,
+        standardize=true
     )
 
     @test sum(model_mlogit.coef) ≈ -10.368346014522867
@@ -71,13 +72,13 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
         @formula(choice ~ price + opcost + range + ev + hybrid + hiperf + medhiperf),
         df_mixed,
         randdist=[:lognormal, :lognormal, :lognormal, :normal, :normal, nothing, nothing],
-        start=[0.0, 0.0, # scalar coefs
-            0.2, 0.1, 0.1, -1.44, 0.412, # b random
-            0.01, 0.01, 0.01, 0.01, 0.01],
+        # start=[0.0, 0.0, # scalar coefs
+        #     0.2, 0.1, 0.1, -1.44, 0.412, # b random
+        #     0.01, 0.01, 0.01, 0.01, 0.01],
         # weights=:weight,
         draws=(100, "test/mydraws4.mat")
     )
-    @test model_mixed.loglikelihood ≈ -1305.9443349232477
+    @test model_mixed.loglikelihood ≈ -1304.7506807221082
 end
 
 

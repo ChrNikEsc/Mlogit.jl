@@ -28,7 +28,7 @@ function fit_mlogit(
     vec_id::Vector{Int64},
     vec_chid::Vector{Int64},
     vec_weights_chid::Vector{Float64},
-    draws::Tuple{Int, Union{Symbol, String}};
+    draws::Tuple{Int,Union{Symbol,String}};
     optim_options=Optim.Options(
         extended_trace=true,
         show_trace=false,
@@ -38,7 +38,7 @@ function fit_mlogit(
         # x_abstol=-1,
         # x_reltol=-1,
         # g_abstol=1e-15
-        )
+    )
 )
     n_id::Int64 = maximum(vec_id)
     n_chid::Int64 = maximum(vec_chid)
@@ -64,7 +64,7 @@ function fit_mlogit(
     end
 
     NDRAWS::Int64 = draws[1] # Number of draws
-    DRAWTYPE::Union{Symbol, String} = draws[2] # Type of draws
+    DRAWTYPE::Union{Symbol,String} = draws[2] # Type of draws
 
     NV::Int64 = sum(randdist .!= nothing) # Number of random coefficients
     NF::Int64 = sum(randdist .== nothing) # Number of fixed coefficients
@@ -73,7 +73,21 @@ function fit_mlogit(
     B::Vector{Float64} = coef_start[NF+1:NF+NV] # Random coefficients
     W::Vector{Float64} = coef_start[NF+NV+1:end] # Scale parameters for random coefficients
 
-    randdist_random::Vector{Symbol} = randdist[randdist .!= nothing] # Filter out non-random coefficients
+    # If I change to other order of coefficients
+    # F::Vector{Float64} = Float64[]
+    # B::Vector{Float64} = Float64[]
+    # W::Vector{Float64} = Float64[]
+    # for i in eachindex(randdist)
+    #     l = length(F) + length(B) + length(W)
+    #     if isnothing(randdist[i]) # not random coef
+    #         push!(F, coef_start[l+1])
+    #     else # if random coef
+    #         push!(B, coef_start[l+1]) # b
+    #         push!(W, coef_start[l+2]) # w
+    #     end
+    # end
+
+    randdist_random::Vector{Symbol} = randdist[randdist.!=nothing] # Filter out non-random coefficients
 
     # --- Initial values for the log-likelihood function ---
     initial_neg_ll_val = 0.0
@@ -245,7 +259,7 @@ function fit_mlogit(
         end
     end
 
-    
+
 
     # --- Draw Generation ---
     local DR::Array{Float64,3}
@@ -338,10 +352,6 @@ function fit_mlogit(
     deriv_C_b = similar(DR)
     deriv_C_w = similar(DR)
 
-    println("Start estimation")
-    println("The negative of the log-likelihood is minimized,")
-    println("which is the same as maximizing the log-likelihood.")
-
     optim_fg! = (F, G, param) -> fg!(F, G, param, NF, NV, randdist_random, WANTWGT, WGT,
         n_id, NDRAWS, NALTMAX, n_chidMAX, X, S, XF, DR, c_coeffs, V_diff, p_person, pp_choice_sit_draw, deriv_C_b, deriv_C_w)
 
@@ -352,7 +362,6 @@ function fit_mlogit(
     fval_final_val = NaN
     grad_final_at_opt = Float64[]
     inv_hessian_at_opt = zeros(0, 0)
-    stderr_final_val = Float64[]
     elapsed_time_minutes_val = 0.0
     opt_result_obj::Union{Optim.OptimizationResults,Nothing} = nothing
 
@@ -592,7 +601,7 @@ function fit_mlogit(
     # return paramhat_final_val, fval_final_val, grad_final_at_opt, hessian_at_opt, inv_hessian_at_opt, stderr_final_val,
     # NPARAM, WGT, X, XF, S, DR,
     # NALTMAX, n_chidMAX, inds_B_to_estimate, elapsed_time_minutes_val, opt_result_obj
-    return opt_result_obj, paramhat_final_val, Optim.converged(opt_result_obj), Optim.iterations(opt_result_obj), fval_final_val, 0.0, 0.0, grad_final_at_opt, zeros(Float64, NF+NV+NV, NF+NV+NV), hessian, [0.0]
+    return opt_result_obj, paramhat_final_val, Optim.converged(opt_result_obj), Optim.iterations(opt_result_obj), fval_final_val, 0.0, 0.0, grad_final_at_opt, zeros(Float64, NF + NV + NV, NF + NV + NV), hessian, [0.0]
 
 end
 
@@ -710,7 +719,7 @@ function fg!(
     # --- llgrad2_calc Step 3: Calculate Choice Probabilities (P_itn for each draw r) ---
     # V_diff .= exp.(V_diff)
     # V_diff[isinf.(V_diff)] .= T_param(1e200)
-    
+
     @inbounds Threads.@threads for i in eachindex(V_diff)
         V_diff[i] = min(exp(V_diff[i]), T_param(1e200))
     end
@@ -1011,7 +1020,7 @@ function trans_coeffs!(c_coeffs::AbstractArray{T,3},
     DR::AbstractArray{Float64,3},
     NV::Int,
     randdist_random::Vector{Symbol} # Vector of distribution types for each variable
-    ) where {T<:Real}
+) where {T<:Real}
 
     # Step 1: Basic linear transformation (beta = b + w * draw)
     # Broadcasting: (NV,1) .+ (NV,1) .* (NV,n_id,NMEM_current) results in (NV,n_id,NMEM_current).

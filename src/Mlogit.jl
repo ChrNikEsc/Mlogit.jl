@@ -14,7 +14,7 @@ using LineSearches
 using ForwardDiff
 using DiffResults
 using FiniteDifferences
-using LinearAlgebra: diag, dot, mul!
+using LinearAlgebra: diag, diagm, dot, mul!
 import LogExpFunctions
 # using NamedArrays # used to be in fmlogit.jl but might no longer be necessary
 # using Random # used to be in fmlogit.jl but might no longer be necessary
