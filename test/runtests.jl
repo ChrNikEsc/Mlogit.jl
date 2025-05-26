@@ -70,7 +70,7 @@ df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.cs
         df_mixed,
         randdist=[:lognormal, :lognormal, :lognormal, :normal, :normal, nothing, nothing],
         # weights=:weight,
-        draws=(100, "test/mydraws4.mat"),
+        draws=(100, mlogit_datadir * "mydraws4.mat"),
         # draws=(1000, :MLHS),
         standardize=true
     )
