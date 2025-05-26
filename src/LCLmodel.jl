@@ -337,7 +337,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
     set_theme!(fontsize_theme)
     # size = (1600, 900)
     required_lines::Int64 = maximum([Base.size(model.coef_mnl, 1), Base.size(model.coef_memb, 1)]) * model.nclasses
-    size = (1600, required_lines * 25)
+    size = (1600, by == :coefhist ? Base.size(model.coef_mnl, 1) * 100 : required_lines * 25)
 
     model_data = lclmodel_data(model, level=level)
     colorscheme = get(ColorSchemes.Dark2_8, range(0.0, 1.0, length=maximum(model_data.coefname_index)))
@@ -426,10 +426,10 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
         # ax_mnl.yticks = (1:nrow(data_mnl), repeat(model.coefnames_mnl, inner=nclasses) .* " - Class " .* string.(repeat(1:nclasses, outer=nmnlcoef)))
         ytickindexs = Int64[]
         yticklabels = Makie.RichText[]
-        
+
         for (i, c) in enumerate(unique(model_data[model_data.model.==:mnl, :].class))
             data_class = subset(model_data, :class => x -> x .== c, :model => x -> x .== :mnl)
-            
+
             scatter!(ax_mnl, data_class.coef, data_class.coefname_index .* nclasses .+ i .- nclasses, color=data_class.coefname_color, marker=data_class.marker, markersize=model.shares[c] * 15 * nclasses)
             for ii in 1:nrow(data_class)
                 linesegments!(ax_mnl, [(data_class.ci_lo[ii], data_class.coefname_index[ii] .* nclasses .+ i .- nclasses), (data_class.ci_hi[ii], data_class.coefname_index[ii] .* nclasses .+ i .- nclasses)], color=data_class.coefname_color[ii])
@@ -443,6 +443,54 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
         # text!(repeat([minimum(data_mnl.coef) * 1.2], nmnlcoef), (1:nmnlcoef) .* nclasses .- ((nclasses - 1) / 2), text=model.coefnames_mnl, align=(:left, :center), fontsize=17)
 
         fig
+    elseif by == :coefhist
+        # --- 1. Setup Axis ---
+        ax_mnl = Axis(fig[1, 1], yreversed=true, title="Utility Coefficients (MNL Part)", xlabel="Coefficient Value", ylabel="Variable"; mnlaxissettings...)
+
+        # Filter to just the MNL data needed
+        data_mnl = subset(model_data, :model => x -> x .== :mnl)
+
+        # Use the base variable names for the MNL part
+        mnl_varnames = StatsModels.termnames(model.formula.rhs)
+        nmnlcoef = length(mnl_varnames)
+
+        # --- 2. Set axis limits and reference lines ---
+        vlines!(ax_mnl, [0], color=:black, linewidth=2)
+        hlines!(ax_mnl, [i + 0.5 for i in 1:(nmnlcoef-1)], color=:black, linewidth=0.75, linestyle=:dot)
+        ylims!(ax_mnl, nmnlcoef + 0.5, 0.5)
+        ax_mnl.yticks = (1:nmnlcoef, string.(mnl_varnames))
+
+        # --- 3. Define plotting parameters ---
+        # Controls the maximum total height of the symmetric line
+        height_scale = 2
+
+        # --- 4. Main plotting loop (iterate by variable) ---
+        for i in 1:nmnlcoef
+            # Get all class data for the current variable
+            data_var = subset(data_mnl, :coefname_index => x -> x .== i)
+
+            # Inner loop for each class within the variable
+            for row in eachrow(data_var)
+                # Determine color based on significance
+                plot_color = row.significant ? :black : :gray60
+
+                # --- FINAL SYMMETRIC PLOTTING LOGIC with a single centered line ---
+
+                # Total height of the line is proportional to the class share
+                total_height = model.shares[row.class] * height_scale
+
+                # Calculate the top and bottom y-coordinates, centered on the row `i`
+                y_top = i - total_height / 2
+                y_bottom = i + total_height / 2
+
+                # Draw a single, centered vertical line segment for each class
+                linesegments!(ax_mnl,
+                    [(row.coef, y_bottom), (row.coef, y_top)],
+                    color=plot_color, linewidth=3)
+            end
+        end
+        # The figure is returned at the end of the parent function
+        fig
     end
 end
 
@@ -455,9 +503,9 @@ function get_stars(p_value::Real)
         return "**"
     elseif p_value < 0.05
         return "*"
-    # Add 0.1 threshold if desired
-    # elseif p_value < 0.1
-    #     return "†" # Or another symbol like "."
+        # Add 0.1 threshold if desired
+        # elseif p_value < 0.1
+        #     return "†" # Or another symbol like "."
     else
         return "" # No star
     end

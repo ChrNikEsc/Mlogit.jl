@@ -65,21 +65,71 @@ function StatsAPI.fit(::Type{MNLmodel},
     end
 
     if standardize
-        # try
-        mat_X_std_ext::Vector{Float64} = similar(mat_X_std, Float64, n_coefficients)
+        local mat_X_std_ext::Vector{Float64}
         if mixed
-            mat_X_std_ext = vcat(vec(mat_X_std)[randdist.==nothing], vec(mat_X_std)[randdist.!=nothing], vec(mat_X_std)[randdist.!=nothing])
+            # mat_X_std_ext = vcat(vec(mat_X_std)[randdist.==nothing], vec(mat_X_std)[randdist.!=nothing], vec(mat_X_std)[randdist.!=nothing])
+            current_coeff_idx = 1 # Index to walk through the 'coefficients' vector
+            mat_X_std_ext = Float64[]
+            for i in eachindex(randdist)
+                if isnothing(randdist[i]) # not random coef
+                    push!(mat_X_std_ext, mat_X_std[i])
+                    coefficients[current_coeff_idx] /= mat_X_std[i]
+                    current_coeff_idx += 1
+                else # if random coef
+                    # push!(mat_X_std_ext, mat_X_std[i]) # b
+                    if randdist[i] == :normal0mn
+                        # do nothing because mean ist not estimated
+                    elseif randdist[i] == :lognormal
+                        push!(mat_X_std_ext, 1.0) # b
+                        coefficients[current_coeff_idx] -= log(mat_X_std[i])
+                        current_coeff_idx += 1
+                    elseif randdist[i] == :S_B
+                        push!(mat_X_std_ext, 1.0) # b
+                        current_coeff_idx += 1 # no transformation for S_B b
+                    else
+                        push!(mat_X_std_ext, mat_X_std[i]) # b
+                        coefficients[current_coeff_idx] /= mat_X_std[i]
+                        current_coeff_idx += 1
+                    end
+
+                    if randdist[i] == :lognormal || randdist[i] == :S_B
+                        push!(mat_X_std_ext, 1.0) # w
+                        current_coeff_idx += 1 # no transformation for lognormal and S_B w
+                    else
+                        push!(mat_X_std_ext, mat_X_std[i]) # w
+                        coefficients[current_coeff_idx] /= mat_X_std[i]
+                        current_coeff_idx += 1
+                    end
+                end
+            end
         else
             mat_X_std_ext = vcat(vec(mat_X_std), ones(n_coefficients - size(mat_X_std, 2)))
+            coefficients ./= mat_X_std_ext
         end
-        coefficients ./= mat_X_std_ext
         gradient .*= mat_X_std_ext
         estfun .*= mat_X_std_ext'
         hessian = (diagm(mat_X_std_ext) * hessian * diagm(mat_X_std_ext))
-        # catch e
-        #     @warn "Reverting Standardization failed. Reporting standardized coefficients, gradient and Hessian as is."
-        # end
+
+        coef_dist::AbstractVector = []
+        if mixed
+            for idx in eachindex(randdist)
+                ncoefssofar = idx + sum(randdist[1:idx] .!= nothing) - 1
+                if isnothing(randdist[idx])
+                    push!(coef_dist, coefficients[ncoefssofar])
+                elseif randdist[idx] == :normal
+                    push!(coef_dist, Normal(coefficients[ncoefssofar], abs(coefficients[ncoefssofar+1])))
+                    push!(coef_dist, nothing) # to have same length as the original coef vector
+                elseif randdist[idx] == :lognormal
+                    push!(coef_dist, LogNormal(coefficients[ncoefssofar], abs(coefficients[ncoefssofar+1])))
+                    push!(coef_dist, nothing) # to have same length as the original coef vector
+                end
+            end
+        else
+            coef_dist = coefficients
+        end
     end
+
+    !isnothing(randdist) && any(x -> x == :S_B, randdist) && standardize && @warn("S_B random coefficients are estimated on standardized data. Interpretation relative to mean of data.")
 
     vcov = inv(hessian)
 
@@ -100,6 +150,7 @@ function StatsAPI.fit(::Type{MNLmodel},
         iter=iter,
         loglikelihood=loglik,
         mixed=false,
+        coef_dist=coef_dist,
         nclusters=nothing,
         nchids=n_chid,
         nests=nested ? nests : nothing,
@@ -145,21 +196,20 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
     elseif !nested && !mixed
         coefnames_utility
     elseif !nested && mixed
-        # tmp_cn = String[]
-        # for idx in eachindex(randdist)
-        #     if isnothing(randdist[idx])
-        #         push!(tmp_cn, coefnames_utility[idx])
-        #     else
-        #         push!(tmp_cn, string(coefnames_utility[idx]) * " b " * string(randdist[idx]))
-        #         push!(tmp_cn, string(coefnames_utility[idx]) * " w " * string(randdist[idx]))
-        #     end
-        # end
-        # coef_names = tmp_cn
-        vcat(coefnames_utility[randdist.==nothing],
-            [string(coefnames_utility[idx]) * " b " * string(randdist[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])],
-            [string(coefnames_utility[idx]) * " w " * string(randdist[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])]
-            # ["w_" * string(randdist[idx]) * "_" * string(coefnames_utility[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])]
-        )
+        tmp_cn = String[]
+        for idx in eachindex(randdist)
+            if isnothing(randdist[idx])
+                push!(tmp_cn, coefnames_utility[idx])
+            else
+                randdist[idx] .!= :normal0mn && push!(tmp_cn, string(coefnames_utility[idx]) * " b " * string(randdist[idx])) # for :normal0mn only spread is estimated
+                push!(tmp_cn, string(coefnames_utility[idx]) * " w " * string(randdist[idx]))
+            end
+        end
+        coef_names = tmp_cn
+        # vcat(coefnames_utility[randdist.==nothing],
+        #     [string(coefnames_utility[idx]) * " b " * string(randdist[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])],
+        #     [string(coefnames_utility[idx]) * " w " * string(randdist[idx]) for idx in eachindex(randdist) if !isnothing(randdist[idx])]
+        # )
     else
         error("Mixed logit with nests is not implemented.")
     end
@@ -187,11 +237,21 @@ function prepare_mlogit_inputs(formula::FormulaTerm, df, indices::XlogitIndices,
         elseif nested && !mixed
             [zeros(Float64, n_coefficients_util); ones(Float64, equal_lambdas + !equal_lambdas * Base.length(unique(vec_nests)))]
         elseif !nested && mixed
-            vcat(
-                zeros(Float64, length(coefnames_utility[randdist.==nothing])),
-                [0.0 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs
-                [0.01 for idx in eachindex(randdist) if !isnothing(randdist[idx])] # w random coefs
-            )
+            tmp_cs = Float64[]
+            for idx in eachindex(randdist)
+                if isnothing(randdist[idx])
+                    push!(tmp_cs, 0.0)
+                else
+                    randdist[idx] .!= :normal0mn && push!(tmp_cs, 0.0) # for :normal0mn only spread is estimated
+                    push!(tmp_cs, 0.01)
+                end
+            end
+            tmp_cs
+            # vcat(
+            #     zeros(Float64, length(coefnames_utility[randdist.==nothing])),
+            #     [0.0 for idx in eachindex(randdist) if !isnothing(randdist[idx])], # b random coefs
+            #     [0.01 for idx in eachindex(randdist) if !isnothing(randdist[idx])] # w random coefs
+            # )
         else
             zeros(Float64, n_coefficients)
         end

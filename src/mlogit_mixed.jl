@@ -59,8 +59,7 @@ function fit_mlogit(
     allowed_dist_types = [:normal, :lognormal, :truncnormal, :S_B, :normal0mn, :triangular]
 
     if !all((randdist .== nothing) .| (randdist .∈ Ref(allowed_dist_types)))
-        println("Error: randdist contains invalid distribution types. Allowed types are now (excluding nothing explicitly): $allowed_dist_types, or 'nothing'")
-        error("Terminating due to invalid distribution types.")
+        error("Error: randdist contains invalid distribution types. Allowed types are: $allowed_dist_types, or 'nothing'")
     end
 
     NDRAWS::Int64 = draws[1] # Number of draws
@@ -69,23 +68,37 @@ function fit_mlogit(
     NV::Int64 = sum(randdist .!= nothing) # Number of random coefficients
     NF::Int64 = sum(randdist .== nothing) # Number of fixed coefficients
 
-    F::Vector{Float64} = coef_start[1:NF] # Fixed coefficients
-    B::Vector{Float64} = coef_start[NF+1:NF+NV] # Random coefficients
-    W::Vector{Float64} = coef_start[NF+NV+1:end] # Scale parameters for random coefficients
+    # F::Vector{Float64} = coef_start[1:NF] # Fixed coefficients
+    # B::Vector{Float64} = coef_start[NF+1:NF+NV] # Random coefficients
+    # W::Vector{Float64} = coef_start[NF+NV+1:end] # Scale parameters for random coefficients
 
-    # If I change to other order of coefficients
-    # F::Vector{Float64} = Float64[]
-    # B::Vector{Float64} = Float64[]
-    # W::Vector{Float64} = Float64[]
-    # for i in eachindex(randdist)
-    #     l = length(F) + length(B) + length(W)
-    #     if isnothing(randdist[i]) # not random coef
-    #         push!(F, coef_start[l+1])
-    #     else # if random coef
-    #         push!(B, coef_start[l+1]) # b
-    #         push!(W, coef_start[l+2]) # w
-    #     end
-    # end
+    # Train's Matlab code works with (F, B, W) param vector
+    # The following lines extract these from coef_start which follows the formula order
+    # perm_coefs saves this order for returning the coefficients in the original order
+    perm_coefs::Vector{Int64} = Int64[]
+
+    F::Vector{Float64} = Float64[]
+    B::Vector{Float64} = Float64[]
+    W::Vector{Float64} = Float64[]
+    for i in eachindex(randdist)
+        lf = length(F)
+        lw = length(W)
+        l = length(F) + length(B) + length(W)
+        if isnothing(randdist[i]) # not random coef
+            push!(F, coef_start[l+1])
+            push!(perm_coefs, lf + 1)
+        else # if random coef
+            if randdist[i] .!= :normal0mn
+                push!(B, coef_start[l+1]) # b, but not if :normal0mmn
+                push!(perm_coefs, NF + lw + 1) # Store the index of the random coefficient
+                push!(W, coef_start[l+2]) # w
+                push!(perm_coefs, NF + lw + 1 + NV) # Store the index of the scale parameter
+            else
+                push!(W, coef_start[l+1]) # w
+                push!(perm_coefs, NF + lw + NV) # Store the index of the scale parameter
+            end
+        end
+    end
 
     randdist_random::Vector{Symbol} = randdist[randdist.!=nothing] # Filter out non-random coefficients
 
@@ -322,8 +335,8 @@ function fit_mlogit(
 
     # --- Initial Parameters ---
     param_F_local = F
-    inds_B_to_estimate = [v ∈ [:normal, :lognormal, :S_B, :triangular] for v in randdist_random]
-    param_B_local = B[inds_B_to_estimate]
+    inds_B_to_estimate = [v ∈ [:normal, :lognormal, :S_B, :truncnormal, :triangular] for v in randdist_random]
+    param_B_local = B#[inds_B_to_estimate]
     param_W_local = W
 
     initial_param_local = Vector{Float64}()
@@ -601,6 +614,13 @@ function fit_mlogit(
     # return paramhat_final_val, fval_final_val, grad_final_at_opt, hessian_at_opt, inv_hessian_at_opt, stderr_final_val,
     # NPARAM, WGT, X, XF, S, DR,
     # NALTMAX, n_chidMAX, inds_B_to_estimate, elapsed_time_minutes_val, opt_result_obj
+
+    # Train's matlab code uses (F, B, W) order for parameters
+    # permute back to order implied by formula
+    paramhat_final_val .= paramhat_final_val[perm_coefs]
+    grad_final_at_opt .= grad_final_at_opt[perm_coefs]
+    hessian .= hessian[perm_coefs, perm_coefs]
+
     return opt_result_obj, paramhat_final_val, Optim.converged(opt_result_obj), Optim.iterations(opt_result_obj), fval_final_val, 0.0, 0.0, grad_final_at_opt, zeros(Float64, NF + NV + NV, NF + NV + NV), hessian, [0.0]
 
 end
@@ -650,7 +670,7 @@ function fg!(
         current_idx = NF
     end
 
-    inds_B_to_estimate = [v ∈ [:normal, :lognormal, :S_B, :triangular] for v in randdist_random]
+    inds_B_to_estimate = [v ∈ [:normal, :lognormal, :truncnormal, :S_B, :triangular] for v in randdist_random]
     # inds_B_to_estimate = fill(true, NV)
     # num_b_estimated = NV
 
@@ -939,7 +959,7 @@ function derivatives_calc!(deriv_C_b::AbstractArray{T,3},
 
     # Only need to calculate beta_draws if there are non-linear transformations.
     # Check if any distributions are type 2, 3, or 4.
-    needs_beta_calc = any(randdist_random .∈ Ref([:lognormal, :truncated, :S_B]))
+    needs_beta_calc = any(randdist_random .∈ Ref([:lognormal, :truncnormal, :S_B]))
 
     if needs_beta_calc
         # Calculate beta_draws = b + w * DR, as these are needed for some derivatives.
@@ -955,7 +975,7 @@ function derivatives_calc!(deriv_C_b::AbstractArray{T,3},
                 # So, dC/db = exp(beta_i)
                 deriv_C_b[i, :, :] = c_coeffs_slice_i # Already exp() in trans_coeffs!
 
-            elseif dist_type == :truncated # Truncated Normal: C = max(0, beta_i). dC/d(beta_i) = 1 if beta_i > 0, else 0.
+            elseif dist_type == :truncnormal # Truncated Normal: C = max(0, beta_i). dC/d(beta_i) = 1 if beta_i > 0, else 0.
                 # So, dC/db = (beta_i > 0)
                 deriv_C_b[i, :, :] = (c_coeffs_slice_i .> 0.0)
 
@@ -1045,7 +1065,7 @@ function trans_coeffs!(c_coeffs::AbstractArray{T,3},
             # No action needed.
         elseif dist_type == :lognormal # Lognormal: coefficient is exp(beta_i)
             current_slice .= exp.(current_slice)
-        elseif dist_type == :truncated # Truncated Normal: coefficient is max(0, beta_i)
+        elseif dist_type == :truncnormal # Truncated Normal: coefficient is max(0, beta_i)
             current_slice .= max.(T(0.0), current_slice)
         elseif dist_type == :S_B # S_B (Johnson SB) distribution: exp(beta_i) / (1 + exp(beta_i))
             # current_slice currently holds beta_i

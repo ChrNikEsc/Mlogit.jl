@@ -15,6 +15,7 @@ mutable struct MNLmodel <: RegressionModel
     iter::Union{Int64,Nothing}
     loglikelihood::Float64
     mixed::Bool
+    coef_dist::AbstractVector
     nchids::Int64
     nclusters::Union{NamedTuple,Nothing}
     nests::Union{Nothing,Dict}
@@ -46,6 +47,7 @@ function MNLmodel(;
     iter::Union{Int64,Nothing},
     loglikelihood::Float64,
     mixed::Bool,
+    coef_dist::AbstractVector,
     nchids::Int64,
     nclusters::Union{NamedTuple,Nothing},
     nests::Union{Nothing,Dict},
@@ -58,7 +60,7 @@ function MNLmodel(;
     time::Float64,
     vcov::Matrix{Float64},
     vcov_type::Vcov.CovarianceEstimator)
-    return MNLmodel(coef, coefnames, converged, depvar, df_hash, dof, estfun, fitted, formula, formula_origin, formula_schema, hessian, indices, iter, loglikelihood, mixed, nchids, nclusters, nests, nids, nullloglikelihood, optim, score, start, startloglikelihood, time, vcov, vcov_type)
+    return MNLmodel(coef, coefnames, converged, depvar, df_hash, dof, estfun, fitted, formula, formula_origin, formula_schema, hessian, indices, iter, loglikelihood, mixed, coef_dist, nchids, nclusters, nests, nids, nullloglikelihood, optim, score, start, startloglikelihood, time, vcov, vcov_type)
 end
 
 function StatsAPI.adjr2(model::MNLmodel, variant::Symbol)
@@ -94,6 +96,7 @@ function StatsAPI.coeftable(model::MNLmodel; level::Real=0.95, type::Union{Strin
     zz1 = (cc .- 1) ./ se
     p1 = 2.0 * ccdf.(Normal(), abs.(zz1))
     # p1 = ccdf.(FDist(1, dof_residual(model)), abs2.(zz1))
+
     return CoefTable(hcat(cc, se, zz0, p0, zz1, p1, confint(model; level=level, type=type, cluster=cluster)),
         ["Estimate", "Std.Error", "z0 value", "Pr(>|z0|)", "z1 value", "Pr(>|z1|)", "Conf.Low $((level * 100))%", "Conf.High $((level * 100))%"],
         coefnames(model), 4)
@@ -485,41 +488,212 @@ function meatCL(model::MNLmodel, cluster; type="HC1", cadjust=true, multi0=false
     return rval
 end
 
+# function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing)
+#     # coefficient plot
+#     fontsize_theme = Theme(fontsize=30)
+#     set_theme!(fontsize_theme)
+#     resolution = (1600, 600)
+
+#     coefs = coef(model)
+
+#     ci = confint(model, level=level, type=type, cluster=cluster)
+#     ci_lo = ci[:, 1]
+#     ci_hi = ci[:, 2]
+#     significant = vec(sum(sign.(ci), dims=2) .== 0)
+
+#     # Create the plot
+#     fig_coefs = Figure(resolution=resolution)
+#     ax = Axis(fig_coefs[1, 1], xlabel="Coefficient", ylabel="Variable", yreversed=true)
+#     # Red line at x=0
+#     vlines!(ax, [0], color=:red, linewidth=3)
+#     # Add horizontal lines for confidence intervals
+#     for i in 1:length(coefs)
+#         linesegments!(ax, [(ci_lo[i], i), (ci_hi[i], i)],
+#             color=:black, label=i == 1 ? "Confidence Interval" : nothing)
+#     end
+#     # Scatter plot for coefficients
+#     scatter!(ax, coefs, 1:length(coefs), color=significant, colormap=[:gray60, :black], label="Coefficient", markersize=20)
+#     # scatter!(ax, coefs, 1:length(coefs), label="Coefficient", markersize=20)
+#     # Customizing the y-axis to show variable names
+#     ax.yticks = (1:length(coefs), coefnames(model))
+#     # Add a legend
+#     # axislegend(ax)
+#     fig_coefs[1, 2] = Legend(fig_coefs, ax, framevisible=false)
+#     # Show the plot
+#     return fig_coefs
+# end
+
+
 function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing)
-    # coefficient plot
-    fontsize_theme = Theme(fontsize=30)
+    # --- 1. Setup the plot theme and figure ---
+    fontsize_theme = Theme(fontsize=17)
     set_theme!(fontsize_theme)
-    resolution = (1600, 600)
+    required_lines::Int64 = Base.length(coefnames(model))
+    size = (1600, required_lines * 60)
+    
+    fig = Figure(size=size)
+    ax = Axis(fig[1, 1], xlabel="Coefficient Value", ylabel="Variable", yreversed=true)
+    vlines!(ax, [0], color=:black, linewidth=2) # Global reference line at zero
 
+    # --- 2. Extract data from the model ---
     coefs = coef(model)
-
+    dists = model.coef_dist
     ci = confint(model, level=level, type=type, cluster=cluster)
-    ci_lo = ci[:, 1]
-    ci_hi = ci[:, 2]
-    significant = vec(sum(sign.(ci), dims=2) .== 0)
 
-    # Create the plot
-    fig_coefs = Figure(resolution=resolution)
-    ax = Axis(fig_coefs[1, 1], xlabel="Coefficient", ylabel="Variable", yreversed=true)
-    # Red line at x=0
-    vlines!(ax, [0], color=:red, linewidth=3)
-    # Add horizontal lines for confidence intervals
-    for i in 1:length(coefs)
-        linesegments!(ax, [(ci_lo[i], i), (ci_hi[i], i)],
-            color=:black, label=i == 1 ? "Confidence Interval" : nothing)
+    # --- 3. Filter to get one entry per variable (for plotting logic) ---
+    plot_info = []
+    for i in 1:length(dists)
+        if dists[i] !== nothing
+            push!(plot_info, (dist_or_val=dists[i], original_index=i))
+        end
     end
-    # Scatter plot for coefficients
-    scatter!(ax, coefs, 1:length(coefs), color=significant, colormap=[:gray60, :black], label="Coefficient", markersize=20)
-    # scatter!(ax, coefs, 1:length(coefs), label="Coefficient", markersize=20)
-    # Customizing the y-axis to show variable names
-    ax.yticks = (1:length(coefs), coefnames(model))
-    # Add a legend
-    # axislegend(ax)
-    fig_coefs[1, 2] = Legend(fig_coefs, ax, framevisible=false)
-    # Show the plot
-    return fig_coefs
+    num_vars = length(plot_info)
+
+    # --- 4. Configure axes with variable names from formula ---
+    varnames = if isnothing(model.nests)
+        StatsModels.termnames(model.formula.rhs)
+    else
+        # Assuming in the nested case, the detailed names are more descriptive
+        # and we need to identify lambdas from them.
+        coefnames(model)
+    end
+    @assert length(varnames) == num_vars "Mismatch between number of formula names ($(length(varnames))) and plot variables ($num_vars)."
+    
+    # --- NEW: Identify which variables are lambda/nesting parameters by name ---
+    # Adjust the "lambda" string to match your naming convention (e.g., "tau")
+    is_lambda = startswith.(string.(varnames), "lambda")
+
+    ax.yticks = (1:num_vars, string.(varnames))
+
+    # --- 5. Iterate through variables and plot ---
+    for (y_pos, data) in enumerate(plot_info)
+
+        # --- CASE A: Random Coefficient (plot density) ---
+        if data.dist_or_val isa Distribution
+            # (No changes needed here, assuming lambdas are not random coefficients)
+            dist = data.dist_or_val
+            q_low = quantile(dist, 0.001)
+            q_high = quantile(dist, 0.999)
+            x_range = range(q_low, q_high, length=200)
+            y_pdf = pdf.(dist, x_range)
+            max_pdf_val = maximum(y_pdf)
+            y_pdf_scaled = max_pdf_val > 0 ? (y_pdf / max_pdf_val) * 0.4 : zeros(length(y_pdf))
+            
+            band!(ax, x_range, y_pos .- y_pdf_scaled, y_pos .+ y_pdf_scaled, color=(:gray85, 0.8))
+            lines!(ax, x_range, y_pos .+ y_pdf_scaled, color=:black, linewidth=1.5)
+            lines!(ax, x_range, y_pos .- y_pdf_scaled, color=:black, linewidth=1.5)
+
+        # --- CASE B: Fixed Coefficient (plot point and CI) ---
+        elseif data.dist_or_val isa Real
+            idx = data.original_index
+            c = coefs[idx]
+            ci_lo = ci[idx, 1]
+            ci_hi = ci[idx, 2]
+
+            # --- NEW: Set null value based on whether it's a lambda param ---
+            is_current_var_lambda = is_lambda[y_pos]
+            null_value = is_current_var_lambda ? 1.0 : 0.0
+
+            # --- NEW: Add a reference marker at x=1 for lambda coefficients ---
+            if is_current_var_lambda
+                scatter!(ax, [1.0], [y_pos], color=:red, marker='x', markersize=20)
+            end
+
+            # --- NEW: Significance test is now against the dynamic null_value ---
+            # Insignificant if the confidence interval contains the null value
+            is_significant = !(ci_lo <= null_value <= ci_hi)
+            
+            point_color = is_significant ? :black : :gray60
+
+            linesegments!(ax, [(ci_lo, y_pos), (ci_hi, y_pos)], color=point_color, linewidth=3)
+            scatter!(ax, [c], [y_pos], color=point_color, markersize=20)
+        end
+    end
+
+    # --- 6. Create a clean, manual legend ---
+    legend_elements = [
+        PolyElement(color=:gray85, strokecolor=:black, strokewidth=1.5),
+        [LineElement(color=:gray60, linewidth=3), MarkerElement(color=:gray60, marker=:circle, markersize=20)],
+        [LineElement(color=:black, linewidth=3), MarkerElement(color=:black, marker=:circle, markersize=20)],
+        MarkerElement(color=:red, marker='x', markersize=20) # --- NEW: Legend entry for lambda marker
+    ]
+    legend_labels = [
+        "Random Coefficient Density",
+        "Insignificant Fixed Coefficient",
+        "Significant Fixed Coefficient",
+        "Lambda H₀ = 1" # --- NEW: Legend label
+    ]
+    fig[1, 2] = Legend(fig, legend_elements, legend_labels, "Legend", framevisible=false)
+
+    return fig
 end
 
 function RegressionTables.default_regression_statistics(model::MNLmodel)
     [Nobs, R2McFadden, AdjR2McFadden, LogLikelihood, AIC, BIC]
+end
+
+function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.95])
+
+    data = model.coef_dist
+    data = data[data .!= nothing] # Remove Nothings from the data
+    results_list = []
+
+    mnl_varnames = StatsModels.termnames(model.formula.rhs)
+
+    for (i, item) in enumerate(data)
+        local stats # Ensure stats is local to the loop
+
+        if item isa Distribution
+            # For Distribution objects
+            dist_mean = mean(item)
+            dist_std = std(item)
+            share_neg = cdf(item, 0.0)
+            quants = [quantile(item, q) for q in quantile_levels]
+            var_name = "$(mnl_varnames[i]) ($(typeof(item).name.name))"
+
+            stats = (
+                Variable=var_name,
+                Mean=dist_mean,
+                StdDev=dist_std,
+                ShareBelowZero=share_neg,
+                Quantiles=quants
+            )
+
+        elseif item isa Real
+            # For Float64 or other real numbers (treated as a point mass)
+            var_name = "$(mnl_varnames[i])"
+            # A single number has no standard deviation, and its mean is itself.
+            # Quantiles are all equal to the number.
+            stats = (
+                Variable=var_name,
+                Mean=item,
+                StdDev=0.0,
+                ShareBelowZero=item < 0 ? 1.0 : 0.0,
+                Quantiles=[item for q in quantile_levels]
+            )
+        else
+            # Handle other potential types if necessary
+            @warn "Item at index $i of type $(typeof(item)) is not supported and will be skipped."
+            continue
+        end
+
+        push!(results_list, stats)
+    end
+
+    # 5. Create the DataFrame from the list of results
+    results = DataFrame(results_list)
+
+    # 6. Format the final DataFrame for better presentation
+    # Unpack the quantiles array into separate columns.
+    quantile_names = ["Q_$(Int(q*100))" for q in quantile_levels]
+    for (i, name) in enumerate(quantile_names)
+        results[!, name] = [q[i] for q in results.Quantiles]
+    end
+
+    # Select and reorder columns for the final output
+    final_df = select(results, :Variable, :Mean, :StdDev, :ShareBelowZero, Symbol.(quantile_names)...)
+
+    # 7. Print the resulting table
+    # Julia will automatically use the default display format for DataFrames.
+    println(final_df)
 end
