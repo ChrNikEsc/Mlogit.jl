@@ -615,13 +615,13 @@ function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}
         PolyElement(color=:gray85, strokecolor=:black, strokewidth=1.5),
         [LineElement(color=:gray60, linewidth=3), MarkerElement(color=:gray60, marker=:circle, markersize=20)],
         [LineElement(color=:black, linewidth=3), MarkerElement(color=:black, marker=:circle, markersize=20)],
-        MarkerElement(color=:red, marker='x', markersize=20) # --- NEW: Legend entry for lambda marker
+        MarkerElement(color=:red, marker='x', markersize=20)
     ]
     legend_labels = [
         "Random Coefficient Density",
         "Insignificant Fixed Coefficient",
         "Significant Fixed Coefficient",
-        "Lambda H₀ = 1" # --- NEW: Legend label
+        "Lambda H₀ = 1"
     ]
     fig[1, 2] = Legend(fig, legend_elements, legend_labels, "Legend", framevisible=false)
 
@@ -693,7 +693,5 @@ function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.9
     # Select and reorder columns for the final output
     final_df = select(results, :Variable, :Mean, :StdDev, :ShareBelowZero, Symbol.(quantile_names)...)
 
-    # 7. Print the resulting table
-    # Julia will automatically use the default display format for DataFrames.
-    println(final_df)
+    return final_df
 end

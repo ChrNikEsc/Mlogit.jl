@@ -356,7 +356,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
 
     if by == :class
 
-        ax_mnl = Axis(fig[1:nclasses, 1:10], yreversed=true; mnlaxissettings...)
+        ax_mnl = Axis(fig[1:nclasses, 1:10], yreversed=true, xlabel="Coefficient Value", ylabel="Variable"; mnlaxissettings...)
         xlims!(ax_mnl, minimum(data_mnl.coef) * 1.1, maximum(data_mnl.coef) * 1.1)
         ylims!(ax_mnl, nclasses * nmnlcoef + 0.5, 0.5)
         ax_mnl.yticks = (1:nrow(data_mnl), [rich(row.coefname * get_stars(row.p0), color=get_label_color(row.p0, level=level)) for row in eachrow(data_mnl)])
@@ -417,7 +417,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
         fig
 
     elseif by == :coef
-        ax_mnl = Axis(fig[1, 1], yreversed=true; mnlaxissettings...)
+        ax_mnl = Axis(fig[1, 1], yreversed=true, xlabel="Coefficient Value", ylabel="Variable"; mnlaxissettings...)
         xlims!(ax_mnl, minimum(data_mnl.coef) * 1.1, maximum(data_mnl.coef) * 1.1)
         ylims!(ax_mnl, nclasses * nmnlcoef + 0.5, 0.5)
 
@@ -445,7 +445,7 @@ function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), m
         fig
     elseif by == :coefhist
         # --- 1. Setup Axis ---
-        ax_mnl = Axis(fig[1, 1], yreversed=true, title="Utility Coefficients (MNL Part)", xlabel="Coefficient Value", ylabel="Variable"; mnlaxissettings...)
+        ax_mnl = Axis(fig[1, 1], yreversed=true, xlabel="Coefficient Value", ylabel="Variable"; mnlaxissettings...)
 
         # Filter to just the MNL data needed
         data_mnl = subset(model_data, :model => x -> x .== :mnl)
