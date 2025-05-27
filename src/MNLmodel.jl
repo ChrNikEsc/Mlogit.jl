@@ -645,10 +645,10 @@ function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.9
 
         if item isa Distribution
             # For Distribution objects
-            dist_mean = mean(item)
-            dist_std = std(item)
-            share_neg = cdf(item, 0.0)
-            quants = [quantile(item, q) for q in quantile_levels]
+            dist_mean = round(mean(item), digits=3)
+            dist_std = round(std(item), digits=3)
+            share_neg = round(cdf(item, 0.0), digits=3)
+            quants = [round(quantile(item, q), digits=3) for q in quantile_levels]
             var_name = "$(mnl_varnames[i]) ($(typeof(item).name.name))"
 
             stats = (
@@ -666,10 +666,10 @@ function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.9
             # Quantiles are all equal to the number.
             stats = (
                 Variable=var_name,
-                Mean=item,
+                Mean=round(item, digits=3),
                 StdDev=0.0,
                 ShareBelowZero=item < 0 ? 1.0 : 0.0,
-                Quantiles=[item for q in quantile_levels]
+                Quantiles=[round(item, digits=3) for q in quantile_levels]
             )
         else
             # Handle other potential types if necessary
