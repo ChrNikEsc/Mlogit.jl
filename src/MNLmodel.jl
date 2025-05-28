@@ -688,7 +688,7 @@ function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.9
     end
 
     # Select and reorder columns for the final output
-    final_df = select(results, :Variable, :MNL, :Mean, :StdDev, :ShareBelowZero, Symbol.(quantile_names)...)
+    final_df = select(results, :Variable, :MNL, :Mean, :StdDev, :ShareBelowZero => "Share < 0", Symbol.(quantile_names)...)
 
     return final_df
 end
