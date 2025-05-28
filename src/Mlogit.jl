@@ -50,5 +50,6 @@ include("mlogit.jl")
 include("fmlogit.jl")
 include("lclogit.jl")
 include("mlogit_mixed.jl")
+include("RegressionTablesExt.jl")
 
 end
