@@ -488,43 +488,7 @@ function meatCL(model::MNLmodel, cluster; type="HC1", cadjust=true, multi0=false
     return rval
 end
 
-# function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing)
-#     # coefficient plot
-#     fontsize_theme = Theme(fontsize=30)
-#     set_theme!(fontsize_theme)
-#     resolution = (1600, 600)
-
-#     coefs = coef(model)
-
-#     ci = confint(model, level=level, type=type, cluster=cluster)
-#     ci_lo = ci[:, 1]
-#     ci_hi = ci[:, 2]
-#     significant = vec(sum(sign.(ci), dims=2) .== 0)
-
-#     # Create the plot
-#     fig_coefs = Figure(resolution=resolution)
-#     ax = Axis(fig_coefs[1, 1], xlabel="Coefficient", ylabel="Variable", yreversed=true)
-#     # Red line at x=0
-#     vlines!(ax, [0], color=:red, linewidth=3)
-#     # Add horizontal lines for confidence intervals
-#     for i in 1:length(coefs)
-#         linesegments!(ax, [(ci_lo[i], i), (ci_hi[i], i)],
-#             color=:black, label=i == 1 ? "Confidence Interval" : nothing)
-#     end
-#     # Scatter plot for coefficients
-#     scatter!(ax, coefs, 1:length(coefs), color=significant, colormap=[:gray60, :black], label="Coefficient", markersize=20)
-#     # scatter!(ax, coefs, 1:length(coefs), label="Coefficient", markersize=20)
-#     # Customizing the y-axis to show variable names
-#     ax.yticks = (1:length(coefs), coefnames(model))
-#     # Add a legend
-#     # axislegend(ax)
-#     fig_coefs[1, 2] = Legend(fig_coefs, ax, framevisible=false)
-#     # Show the plot
-#     return fig_coefs
-# end
-
-
-function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing, axissettings=(;))
+function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing, printstandardMNL=true, axissettings=(;))
     # --- 1. Setup the plot theme and figure ---
     fontsize_theme = Theme(fontsize=18)
     set_theme!(fontsize_theme)
@@ -590,7 +554,7 @@ function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}
             lines!(ax, x_range, y_pos .- y_pdf_scaled, color=:black, linewidth=1.5)
 
             # Plot point estimate of MNL model for reference
-            scatter!(ax, [data.dist_or_val[2]], [y_pos], marker='o', color=:black, markersize=20)
+            printstandardMNL && scatter!(ax, [data.dist_or_val[2]], [y_pos], marker='o', color=:black, markersize=20)
 
             # --- CASE B: Fixed Coefficient (plot point and CI) ---
         elseif data.dist_or_val[1] isa Real
@@ -619,6 +583,9 @@ function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}
 
             linesegments!(ax, [(ci_lo, y_pos), (ci_hi, y_pos)], color=point_color, linewidth=3)
             scatter!(ax, [c], [y_pos], color=point_color, markersize=20)
+
+            # Plot point estimate of MNL model for reference - also for fixed coefficients as these may be different
+            printstandardMNL && has_random && scatter!(ax, [data.dist_or_val[2]], [y_pos], marker='o', color=:black, markersize=20)
         end
     end
 
@@ -628,10 +595,15 @@ function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}
 
     has_random && begin
         push!(legend_elements, [
-            PolyElement(color=:gray85, strokecolor=:black, strokewidth=1.5),
-            MarkerElement(color=:black, marker='o', markersize=15)
+            PolyElement(color=:gray85, strokecolor=:black, strokewidth=1.5)
         ])
         push!(legend_labels, "Random Coefficient Density")
+    end
+    printstandardMNL && has_random && begin
+        push!(legend_elements, [
+            MarkerElement(color=:black, marker='o', markersize=15)
+        ])
+        push!(legend_labels, "Coefficient in a Standard MNL Model")
     end
     has_fixed && begin
         push!(legend_elements, [LineElement(color=:gray60, linewidth=3), MarkerElement(color=:gray60, marker=:circle, markersize=20)])

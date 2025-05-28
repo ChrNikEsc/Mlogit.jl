@@ -2,6 +2,15 @@
 # Copied and adapted from https://github.com/jmboehm/RegressionTables.jl/blob/0fb6d7dfda349a963efbd5702a2dc96e819b643b/ext/RegressionTablesFixedEffectModelsExt.jl#L47
 # needed to show clusters in RegressionTables
 
+# Important for Mixed Logit to use coefnames and not variable names in formula
+function RegressionTables._coefnames(x::MNLmodel)
+    out = coefnames(x)
+    if !isa(out, AbstractVector)
+        out = [out]
+    end
+    out
+end
+
 function RegressionTables.other_stats(model::Union{MNLmodel, FMLmodel}, s::Symbol)
     if s == :clusters && model.nclusters !== nothing
         collect(RegressionTables.ClusterCoefName.(string.(keys(model.nclusters))) .=> RegressionTables.ClusterValue.(values(model.nclusters)))
