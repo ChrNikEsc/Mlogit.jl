@@ -102,14 +102,7 @@ function fit_mlogit(
 
     randdist_random::Vector{Symbol} = randdist[randdist.!=nothing] # Filter out non-random coefficients
 
-    # --- Initial values for the log-likelihood function ---
-    initial_neg_ll_val = 0.0
-    if NV > 0
-        initial_neg_ll_val = -1e10
-    end
-
     WANTWGT = Int64(any(vec_weights_chid .!= 1.0)) # If all weights are 1, set to 0
-
 
     # --- Create variables based on inputs ---
     # Most  variables can be used directly if their names don't clash
@@ -403,225 +396,24 @@ function fit_mlogit(
 
     hessian = inv(inv_hessian_at_opt) # Inverse of the inverse Hessian
 
-    # --- Post-estimation processing (standard errors, etc.) ---
-    # open(output_filename, "a") do io
-    #     @printf(io, "\nEstimation took %.4f minutes.\n\n", elapsed_time_minutes_val)
-
-    #     if NPARAM == 0
-    #         @printf(io, "No optimization performed as NPARAM = 0.\n")
-    #         @printf(io, "Value of the (negative) log-likelihood function: %.6f\n\n", fval_final_val)
-    #     elseif opt_result_obj !== nothing
-    #         if Optim.converged(opt_result_obj)
-    #             @printf(io, "Convergence achieved.\n")
-    #         else
-    #             @printf(io, "Convergence not achieved. Reason: %s\n", Optim.iteration_limit_reached(opt_result_obj) ? "Iteration limit reached" : string(Optim.summary(opt_result_obj)))
-    #         end
-    #         if !isnan(fval_final_val)
-    #             @printf(io, "Value of the log-likelihood function at result: %.6f\n\n", -fval_final_val)
-    #         else
-    #             @printf(io, "Final log-likelihood value not available.\n\n")
-    #         end
-    #     else
-    #         @printf(io, "Optimization did not run or complete successfully.\n")
-    #     end
-
-    #     @printf(io, "Taking inverse of Hessian for standard errors.\n\n")
-
-
-    #     neg_diagdices = diag_ihess .< -1e-9
-    #     if any(neg_diagdices)
-    #         @printf(io, "Warning: Negative elements on diagonal of inverse Hessian at indices %s. SEs will be NaN for these.\n", findall(neg_diagdices))
-    #     end
-
-
-    #     if !isempty(grad_final_at_opt) && size(inv_hessian_at_opt) == (NPARAM, NPARAM)
-    #         opg_val = dot(grad_final_at_opt, inv_hessian_at_opt * grad_final_at_opt)
-    #         @printf(io, "The value of grad'*inv(hessian)*grad is: %.6e\n\n", opg_val)
-    #     else
-    #         @printf(io, "Final gradient or inverse Hessian not available/compatible for OPG check.\n\n")
-    #     end
-
-    #     # --- Prepare parameters for printing ---
-    #     fhat_print = Float64[]
-    #     fsd_print = Float64[]
-    #     bhat_print = NV > 0 ? zeros(Float64, NV) : Float64[] # Full B, including fixed ones
-    #     bsd_print = NV > 0 ? zeros(Float64, NV) : Float64[]
-    #     what_print = NV > 0 ? zeros(Float64, NV) : Float64[]
-    #     wsd_print = NV > 0 ? zeros(Float64, NV) : Float64[]
-
-    #     if NPARAM > 0 && !isempty(paramhat_final_val) && length(paramhat_final_val) == NPARAM
-    #         current_idx_param = 0
-    #         if NF > 0
-    #             fhat_print = paramhat_final_val[1:NF]
-    #             fsd_print = length(stderr_final_val) >= NF ? stderr_final_val[1:NF] : fill(NaN, NF)
-    #             current_idx_param = NF
-    #         end
-
-    #         if NV > 0
-    #             num_b_estimated = sum(inds_B_to_estimate)
-
-    #             # Populate full bhat_print with original B values for non-estimated params
-    #             bhat_print .= B
-    #             bsd_print .= NaN # Default SE for non-estimated to NaN
-
-    #             if num_b_estimated > 0
-    #                 if length(paramhat_final_val) >= current_idx_param + num_b_estimated
-    #                     bhat_estimated_part = paramhat_final_val[current_idx_param+1:current_idx_param+num_b_estimated]
-    #                     bhat_print[inds_B_to_estimate] .= bhat_estimated_part
-    #                 else
-    #                     bhat_print[inds_B_to_estimate] .= NaN # Should not happen if NPARAM is correct
-    #                 end
-    #                 if length(stderr_final_val) >= current_idx_param + num_b_estimated
-    #                     bsd_estimated_part = stderr_final_val[current_idx_param+1:current_idx_param+num_b_estimated]
-    #                     bsd_print[inds_B_to_estimate] .= bsd_estimated_part
-    #                 else
-    #                     bsd_print[inds_B_to_estimate] .= NaN
-    #                 end
-    #             end
-    #             current_idx_param += num_b_estimated
-
-    #             if length(paramhat_final_val) >= current_idx_param + NV # W params are all estimated
-    #                 what_print = paramhat_final_val[current_idx_param+1:current_idx_param+NV]
-    #                 if length(stderr_final_val) >= current_idx_param + NV
-    #                     wsd_print = stderr_final_val[current_idx_param+1:current_idx_param+NV]
-    #                 else
-    #                     wsd_print = fill(NaN, NV)
-    #                 end
-    #             else
-    #                 what_print = fill(NaN, NV)
-    #                 wsd_print = fill(NaN, NV)
-    #             end
-    #         end
-    #     end
-
-    #     # --- Print results to file ---
-    #     @printf(io, "RESULTS\n\n")
-    #     if NF > 0
-    #         @printf(io, "FIXED COEFFICIENTS\n\n")
-    #         @printf(io, "                        F\n")
-    #         @printf(io, "                 ------------------\n")
-    #         @printf(io, "                   Est        SE\n")
-    #         for r_print = 1:NF
-    #             @printf(io, "%-10s %10.4f %10.4f\n", NAMESF[r_print],
-    #                 length(fhat_print) >= r_print ? fhat_print[r_print] : NaN,
-    #                 length(fsd_print) >= r_print ? fsd_print[r_print] : NaN)
-    #         end
-    #         @printf(io, "\n")
-    #     end
-
-    #     if NV > 0
-    #         @printf(io, "RANDOM COEFFICIENTS\n\n")
-    #         @printf(io, "                               B                                      W\n")
-    #         @printf(io, "                 ----------------------          -----------------------\n")
-    #         @printf(io, "                   Est        SE                  Est        SE\n")
-    #         for r_print = 1:NV
-    #             @printf(io, "%-10s %10.4f %10.4f          %10.4f %10.4f\n",
-    #                 NAMES[r_print],
-    #                 length(bhat_print) >= r_print ? bhat_print[r_print] : NaN,
-    #                 length(bsd_print) >= r_print ? bsd_print[r_print] : NaN,
-    #                 length(what_print) >= r_print ? what_print[r_print] : NaN,
-    #                 length(wsd_print) >= r_print ? wsd_print[r_print] : NaN)
-    #         end
-    #         @printf(io, "\n")
-
-    #         if !isempty(c_coeffs) && NV > 0 && n_id > 0 && NDRAWS > 0
-    #             C_for_stats = reshape(c_coeffs, NV, n_id * NDRAWS)
-    #             @printf(io, "Distribution of coefficients in population implied by B-hat and W-hat.\n")
-    #             @printf(io, "Using all %d draws.\n\n", NDRAWS)
-
-    #             # dist_names_map = ["normal", "lognormal", "truncnormal", "S_B", "normal0mn", "triangular"]
-    #             @printf(io, "                         Mean      StdDev     Share<0     Share=0\n")
-
-    #             mean_C = vec(mean(C_for_stats, dims=2))
-    #             std_C = vec(std(C_for_stats, dims=2))
-    #             share_neg_C = vec(mean(C_for_stats .< 0, dims=2))
-    #             share_zero_C = vec(mean(C_for_stats .== 0, dims=2))
-
-    #             for r_print = 1:NV
-    #                 dist_type = randdist[randdist.!==nothing][r_print]
-    #                 @printf(io, "%-10s %-11s %10.4f %10.4f %10.4f %10.4f\n",
-    #                     NAMES[r_print], string(dist_type),
-    #                     mean_C[r_print], std_C[r_print], share_neg_C[r_print], share_zero_C[r_print])
-    #             end
-    #             @printf(io, "\n")
-    #         end
-    #     end # End if NV > 0
-
-    #     @printf(io, "\nESTIMATED PARAMETERS AND FULL COVARIANCE MATRIX.\n")
-    #     @printf(io, "The estimated values of the parameters are:\n")
-    #     param_names_combined = Vector{String}()
-    #     if NF > 0
-    #         append!(param_names_combined, NAMESF)
-    #     end
-    #     if NV > 0 && !isempty(NAMES)
-    #         temp_b_param_names = String[]
-    #         for i_name = 1:NV
-    #             if inds_B_to_estimate[i_name]
-    #                 push!(temp_b_param_names, "B_" * NAMES[i_name])
-    #             end
-    #         end
-    #         append!(param_names_combined, temp_b_param_names)
-
-    #         w_param_names = ["W_" * NAMES[i] for i in 1:NV]
-    #         append!(param_names_combined, w_param_names)
-    #     end
-
-    #     if NPARAM > 0 && !isempty(paramhat_final_val) && length(paramhat_final_val) == NPARAM && length(paramhat_final_val) == length(param_names_combined)
-    #         for i = 1:NPARAM
-    #             @printf(io, "%-20s : %12.6f\n", param_names_combined[i], paramhat_final_val[i])
-    #         end
-    #     elseif NPARAM > 0 && !isempty(paramhat_final_val) && length(paramhat_final_val) == NPARAM
-    #         @printf(io, "Parameter names list length mismatch with NPARAM. Printing generic names.\n")
-    #         for i = 1:NPARAM
-    #             @printf(io, "PARAM_%-14d : %12.6f\n", i, paramhat_final_val[i])
-    #         end
-    #     else
-    #         @printf(io, "(No parameters estimated or paramhat_final_val not available)\n")
-    #     end
-
-    #     @printf(io, "\nThe covariance matrix for these parameters is (inv(Hessian)):\n")
-    #     if NPARAM > 0 && !isempty(inv_hessian_at_opt) && size(inv_hessian_at_opt, 1) == NPARAM && size(inv_hessian_at_opt, 2) == NPARAM && length(param_names_combined) == NPARAM
-    #         header_str = "        " * join([@sprintf("%-10.10s", param_names_combined[idx]) for idx in 1:NPARAM], " ")
-    #         @printf(io, "%s\n", header_str)
-    #         for i_row = 1:NPARAM
-    #             @printf(io, "%-8.8s", param_names_combined[i_row])
-    #             for j_col = 1:NPARAM
-    #                 @printf(io, " %10.4e", inv_hessian_at_opt[i_row, j_col])
-    #             end
-    #             @printf(io, "\n")
-    #         end
-    #     elseif NPARAM > 0 && !isempty(inv_hessian_at_opt) && size(inv_hessian_at_opt, 1) == NPARAM && size(inv_hessian_at_opt, 2) == NPARAM
-    #         @printf(io, "Parameter names list length mismatch. Printing generic VCV matrix.\n")
-    #         for i_row = 1:NPARAM
-    #             @printf(io, "P%-7d", i_row)
-    #             for j_col = 1:NPARAM
-    #                 @printf(io, " %10.4e", inv_hessian_at_opt[i_row, j_col])
-    #             end
-    #             @printf(io, "\n")
-    #         end
-    #     else
-    #         @printf(io, "(Covariance matrix not available or NPARAM=0)\n")
-    #     end
-
-    #     @printf(io, "\n\nYou can access the estimated parameters as variable paramhat_final_val,\n")
-    #     @printf(io, "the gradient of the negative of the log-likelihood function as variable grad_final_at_opt,\n")
-    #     @printf(io, "the Hessian of the negative of the log-likelihood function as variable hessian_at_opt,\n")
-    #     @printf(io, "and the inverse of the Hessian as variable inv_hessian_at_opt.\n")
-
-    # end # End open(output_filename, "a")
-
-    # Return all relevant results
-    # return paramhat_final_val, fval_final_val, grad_final_at_opt, hessian_at_opt, inv_hessian_at_opt, stderr_final_val,
-    # NPARAM, WGT, X, XF, S, DR,
-    # NALTMAX, n_chidMAX, inds_B_to_estimate, elapsed_time_minutes_val, opt_result_obj
-
     # Train's matlab code uses (F, B, W) order for parameters
     # permute back to order implied by formula
     paramhat_final_val .= paramhat_final_val[perm_coefs]
     grad_final_at_opt .= grad_final_at_opt[perm_coefs]
     hessian .= hessian[perm_coefs, perm_coefs]
 
-    return opt_result_obj, paramhat_final_val, Optim.converged(opt_result_obj), Optim.iterations(opt_result_obj), fval_final_val, 0.0, 0.0, grad_final_at_opt, zeros(Float64, NF + NV + NV, NF + NV + NV), hessian, [0.0]
+    return (opt_result_obj, #opt
+        paramhat_final_val, # coefficients
+        Optim.converged(opt_result_obj), # converged
+        Optim.iterations(opt_result_obj), # iter
+        fval_final_val, # loglik
+        nothing, # loglik_0, comes from standard MNL model which is also estimated in mlogit()
+        0.0, # loglik_start
+        grad_final_at_opt, # gradient
+        zeros(Float64, NF + NV + NV, NF + NV + NV), # estfun TODO!!
+        hessian, # hessian
+        [0.0] # fitted_values
+        )
 
 end
 

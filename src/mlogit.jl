@@ -59,7 +59,8 @@ function StatsAPI.fit(::Type{MNLmodel},
         opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values, nests = fit_mlogit(mat_X, vec_choice, coef_start, vec_chid, vec_weights_chid, vec_nests, equal_lambdas; optim_options=optim_options)
     elseif mixed & !nested
         @warn("Ignoring Optim.Options() if provided. Must ensure that extended_trace=true and store_trace=true.")
-        opt, coefficients, converged, iter, loglik, loglik_0, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, randdist, coef_start, vec_id, vec_chid, vec_weights_chid, draws)
+        opt, coefficients, converged, iter, loglik, _, loglik_start, gradient, estfun, hessian, fitted_values = fit_mlogit(mat_X, vec_choice, randdist, coef_start, vec_id, vec_chid, vec_weights_chid, draws)
+        opt_standardMNL, coefficients_standardMNL, converged_standardMNL, iter_standardMNL, loglik_standardMNL, loglik_0, loglik_start_standardMNL, gradient_standardMNL, estfun_standardMNL, hessian_standardMNL, fitted_values_standardMNL = fit_mlogit(mat_X, vec_choice, zeros(size(mat_X, 2)), vec_chid, vec_weights_chid; optim_options=optim_options)
     else
         error("Mixed logit with nests is not implemented.")
     end
@@ -110,17 +111,17 @@ function StatsAPI.fit(::Type{MNLmodel},
         estfun .*= mat_X_std_ext'
         hessian = (diagm(mat_X_std_ext) * hessian * diagm(mat_X_std_ext))
 
-        coef_dist::AbstractVector = []
+        coef_dist::AbstractVector = [] # stores tuples of (distribution / MMNL estimate and Standard MNL estimate)
         if mixed
             for idx in eachindex(randdist)
                 ncoefssofar = idx + sum(randdist[1:idx] .!= nothing) - 1
                 if isnothing(randdist[idx])
-                    push!(coef_dist, coefficients[ncoefssofar])
+                    push!(coef_dist, (coefficients[ncoefssofar], coefficients_standardMNL[idx]))
                 elseif randdist[idx] == :normal
-                    push!(coef_dist, Normal(coefficients[ncoefssofar], abs(coefficients[ncoefssofar+1])))
+                    push!(coef_dist, (Normal(coefficients[ncoefssofar], abs(coefficients[ncoefssofar+1])), coefficients_standardMNL[idx]))
                     push!(coef_dist, nothing) # to have same length as the original coef vector
                 elseif randdist[idx] == :lognormal
-                    push!(coef_dist, LogNormal(coefficients[ncoefssofar], abs(coefficients[ncoefssofar+1])))
+                    push!(coef_dist, (LogNormal(coefficients[ncoefssofar], abs(coefficients[ncoefssofar+1])), coefficients_standardMNL[idx]))
                     push!(coef_dist, nothing) # to have same length as the original coef vector
                 end
             end

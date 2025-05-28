@@ -524,15 +524,15 @@ end
 # end
 
 
-function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing)
+function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}=nothing, cluster::Union{DataFrame,Nothing}=nothing, axissettings=(;))
     # --- 1. Setup the plot theme and figure ---
-    fontsize_theme = Theme(fontsize=17)
+    fontsize_theme = Theme(fontsize=18)
     set_theme!(fontsize_theme)
     required_lines::Int64 = Base.length(coefnames(model))
-    size = (1600, required_lines * 60)
-    
+    size = (1600, required_lines * 60 + 100) # Adjust height based on number of coefficients + 100 for legend
+
     fig = Figure(size=size)
-    ax = Axis(fig[1, 1], xlabel="Coefficient Value", ylabel="Variable", yreversed=true)
+    ax = Axis(fig[1, 1], xlabel="Coefficient Value", ylabel="Variable", yreversed=true; axissettings...)
     vlines!(ax, [0], color=:black, linewidth=2) # Global reference line at zero
 
     # --- 2. Extract data from the model ---
@@ -558,33 +558,44 @@ function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}
         coefnames(model)
     end
     @assert length(varnames) == num_vars "Mismatch between number of formula names ($(length(varnames))) and plot variables ($num_vars)."
-    
+
     # --- NEW: Identify which variables are lambda/nesting parameters by name ---
     # Adjust the "lambda" string to match your naming convention (e.g., "tau")
     is_lambda = startswith.(string.(varnames), "lambda")
 
     ax.yticks = (1:num_vars, string.(varnames))
 
+    # set up trackers for legend
+    has_random = false
+    has_fixed = false
+    has_lambda = false
+
     # --- 5. Iterate through variables and plot ---
     for (y_pos, data) in enumerate(plot_info)
 
         # --- CASE A: Random Coefficient (plot density) ---
-        if data.dist_or_val isa Distribution
-            # (No changes needed here, assuming lambdas are not random coefficients)
-            dist = data.dist_or_val
+        if data.dist_or_val[1] isa Distribution
+            has_random = true
+
+            dist = data.dist_or_val[1]
             q_low = quantile(dist, 0.001)
             q_high = quantile(dist, 0.999)
             x_range = range(q_low, q_high, length=200)
             y_pdf = pdf.(dist, x_range)
             max_pdf_val = maximum(y_pdf)
             y_pdf_scaled = max_pdf_val > 0 ? (y_pdf / max_pdf_val) * 0.4 : zeros(length(y_pdf))
-            
+
             band!(ax, x_range, y_pos .- y_pdf_scaled, y_pos .+ y_pdf_scaled, color=(:gray85, 0.8))
             lines!(ax, x_range, y_pos .+ y_pdf_scaled, color=:black, linewidth=1.5)
             lines!(ax, x_range, y_pos .- y_pdf_scaled, color=:black, linewidth=1.5)
 
-        # --- CASE B: Fixed Coefficient (plot point and CI) ---
-        elseif data.dist_or_val isa Real
+            # Plot point estimate of MNL model for reference
+            scatter!(ax, [data.dist_or_val[2]], [y_pos], marker='o', color=:black, markersize=20)
+
+            # --- CASE B: Fixed Coefficient (plot point and CI) ---
+        elseif data.dist_or_val[1] isa Real
+            has_fixed = true
+
             idx = data.original_index
             c = coefs[idx]
             ci_lo = ci[idx, 1]
@@ -596,13 +607,14 @@ function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}
 
             # --- NEW: Add a reference marker at x=1 for lambda coefficients ---
             if is_current_var_lambda
-                scatter!(ax, [1.0], [y_pos], color=:red, marker='x', markersize=20)
+                has_lambda = true
+                scatter!(ax, [1.0], [y_pos], color=:black, marker='I', markersize=20)
             end
 
             # --- NEW: Significance test is now against the dynamic null_value ---
             # Insignificant if the confidence interval contains the null value
             is_significant = !(ci_lo <= null_value <= ci_hi)
-            
+
             point_color = is_significant ? :black : :gray60
 
             linesegments!(ax, [(ci_lo, y_pos), (ci_hi, y_pos)], color=point_color, linewidth=3)
@@ -610,20 +622,31 @@ function coefplot(model::MNLmodel; level::Real=0.95, type::Union{String,Nothing}
         end
     end
 
-    # --- 6. Create a clean, manual legend ---
-    legend_elements = [
-        PolyElement(color=:gray85, strokecolor=:black, strokewidth=1.5),
-        [LineElement(color=:gray60, linewidth=3), MarkerElement(color=:gray60, marker=:circle, markersize=20)],
-        [LineElement(color=:black, linewidth=3), MarkerElement(color=:black, marker=:circle, markersize=20)],
-        MarkerElement(color=:red, marker='x', markersize=20)
-    ]
-    legend_labels = [
-        "Random Coefficient Density",
-        "Insignificant Fixed Coefficient",
-        "Significant Fixed Coefficient",
-        "Lambda H₀ = 1"
-    ]
-    fig[1, 2] = Legend(fig, legend_elements, legend_labels, "Legend", framevisible=false)
+    # --- 6. Legend ---
+    legend_elements = []
+    legend_labels = []
+
+    has_random && begin
+        push!(legend_elements, [
+            PolyElement(color=:gray85, strokecolor=:black, strokewidth=1.5),
+            MarkerElement(color=:black, marker='o', markersize=15)
+        ])
+        push!(legend_labels, "Random Coefficient Density")
+    end
+    has_fixed && begin
+        push!(legend_elements, [LineElement(color=:gray60, linewidth=3), MarkerElement(color=:gray60, marker=:circle, markersize=20)])
+        push!(legend_labels, "Insignificant Fixed Coefficient")
+    end
+    has_fixed && begin
+        push!(legend_elements, [LineElement(color=:black, linewidth=3), MarkerElement(color=:black, marker=:circle, markersize=20)])
+        push!(legend_labels, "Significant Fixed Coefficient")
+    end
+    has_lambda && begin
+        push!(legend_elements, MarkerElement(color=:black, marker='I', markersize=20))
+        push!(legend_labels, "Lambda H₀ = 1")
+    end
+
+    fig[2, 1] = Legend(fig, legend_elements, legend_labels, "Legend", framevisible=false, orientation=:horizontal, tellheight=true)
 
     return fig
 end
@@ -635,7 +658,7 @@ end
 function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.95])
 
     data = model.coef_dist
-    data = data[data .!= nothing] # Remove Nothings from the data
+    data = data[data.!=nothing] # Remove Nothings from the data
     results_list = []
 
     mnl_varnames = StatsModels.termnames(model.formula.rhs)
@@ -643,37 +666,39 @@ function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.9
     for (i, item) in enumerate(data)
         local stats # Ensure stats is local to the loop
 
-        if item isa Distribution
+        if item[1] isa Distribution
             # For Distribution objects
-            dist_mean = round(mean(item), digits=3)
-            dist_std = round(std(item), digits=3)
-            share_neg = round(cdf(item, 0.0), digits=3)
-            quants = [round(quantile(item, q), digits=3) for q in quantile_levels]
-            var_name = "$(mnl_varnames[i]) ($(typeof(item).name.name))"
+            dist_mean = round(mean(item[1]), digits=3)
+            dist_std = round(std(item[1]), digits=3)
+            share_neg = round(cdf(item[1], 0.0), digits=3)
+            quants = [round(quantile(item[1], q), digits=3) for q in quantile_levels]
+            var_name = "$(mnl_varnames[i]) ($(typeof(item[1]).name.name))"
 
             stats = (
                 Variable=var_name,
                 Mean=dist_mean,
+                MNL=item[2],
                 StdDev=dist_std,
                 ShareBelowZero=share_neg,
                 Quantiles=quants
             )
 
-        elseif item isa Real
+        elseif item[1] isa Real
             # For Float64 or other real numbers (treated as a point mass)
             var_name = "$(mnl_varnames[i])"
             # A single number has no standard deviation, and its mean is itself.
             # Quantiles are all equal to the number.
             stats = (
                 Variable=var_name,
-                Mean=round(item, digits=3),
+                MNL=item[2],
+                Mean=round(item[1], digits=3),
                 StdDev=0.0,
-                ShareBelowZero=item < 0 ? 1.0 : 0.0,
-                Quantiles=[round(item, digits=3) for q in quantile_levels]
+                ShareBelowZero=item[1] < 0 ? 1.0 : 0.0,
+                Quantiles=[round(item[1], digits=3) for q in quantile_levels]
             )
         else
             # Handle other potential types if necessary
-            @warn "Item at index $i of type $(typeof(item)) is not supported and will be skipped."
+            @warn "Item at index $i of type $(typeof(item[1])) is not supported and will be skipped."
             continue
         end
 
@@ -691,7 +716,7 @@ function coef_dist(model::MNLmodel; quantile_levels=[0.05, 0.25, 0.50, 0.75, 0.9
     end
 
     # Select and reorder columns for the final output
-    final_df = select(results, :Variable, :Mean, :StdDev, :ShareBelowZero, Symbol.(quantile_names)...)
+    final_df = select(results, :Variable, :MNL, :Mean, :StdDev, :ShareBelowZero, Symbol.(quantile_names)...)
 
     return final_df
 end

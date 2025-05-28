@@ -333,7 +333,7 @@ function lclmodel_data(model::LCLmodel; level=0.95)
 end
 
 function coefplot(model::LCLmodel; level=0.95, by=:class, mnlaxissettings=(;), membaxissettings=(;))
-    fontsize_theme = Theme(fontsize=17)
+    fontsize_theme = Theme(fontsize=18)
     set_theme!(fontsize_theme)
     # size = (1600, 900)
     required_lines::Int64 = maximum([Base.size(model.coef_mnl, 1), Base.size(model.coef_memb, 1)]) * model.nclasses
