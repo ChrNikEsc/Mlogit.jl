@@ -7,6 +7,7 @@ function lclogit(
     indices::XlogitIndices=xlogit_indices(),
     method::Symbol=:em,
     quietly::Bool=false,
+    standardize=true,
     # relevant for em
     varname_samplesplit=nothing,
     max_iter::Int64=1000,
@@ -16,10 +17,10 @@ function lclogit(
     optim_method=BFGS(),
     optim_options=Optim.Options(),
     max_retries::Int=5, # to be used if, e.g., the Hessian after the EM algorithm cannot be inverted,
-    chunksize_func = (n) -> ceil(Int, sqrt(n)) # for Hessian chunksize
+    chunksize_func=(n) -> ceil(Int, sqrt(n)) # for Hessian chunksize
 )
 
-    StatsAPI.fit(LCLmodel, formula, df, n_classes, start_memb, start_mnl, indices, method, quietly, varname_samplesplit, max_iter, ltolerance, multithreading, optim_method, optim_options, max_retries, chunksize_func)
+    StatsAPI.fit(LCLmodel, formula, df, n_classes, start_memb, start_mnl, indices, method, quietly, standardize, varname_samplesplit, max_iter, ltolerance, multithreading, optim_method, optim_options, max_retries, chunksize_func)
 end
 
 # Function to compute chid_map
@@ -81,7 +82,7 @@ function loglik_lc(theta::Vector, mat_X::Matrix{Float64}, mat_memb::Matrix{Float
 
     # Loop over subjects
     @inbounds for n in 1:n_id
-        idx_n = id_map[n]  # Precomputed indices
+        idx_n = id_map[n] # Precomputed indices
         Y_n = @view vec_choice[idx_n]
         utils_n = @view mat_utils[idx_n, :] # Log-utilities for individual n
         log_probs_memb_n = @view log_probs_memb[idx_n, :] # Log-membership probabilities for individual n (repeated for each alternative)
@@ -151,7 +152,7 @@ function cond_probs_ll(coefs_mlogit::Matrix{Float64}, coefs_memb::Matrix{Float64
 
     # Loop over subjects
     @inbounds for n in 1:n_id
-        idx_n = id_map[n]  # Precomputed indices
+        idx_n = id_map[n] # Precomputed indices
         Y_n = @view vec_choice[idx_n]
         utils_n = @view mat_utils[idx_n, :] # Log-utilities for individual n
         log_probs_memb_n = @view log_probs_memb[idx_n, :] # Log-membership probabilities for individual n (repeated for each alternative)
@@ -207,6 +208,7 @@ function StatsAPI.fit(::Type{LCLmodel},
     indices::XlogitIndices,
     method::Symbol,
     quietly::Bool,
+    standardize::Bool,
     varname_samplesplit,
     max_iter::Int64,
     ltolerance::Float64,
@@ -247,8 +249,20 @@ function StatsAPI.fit(::Type{LCLmodel},
     vec_choice::BitVector, mat_X::Matrix{Float64} = modelcols(formula_schema, df)
 
     mat_memb::Matrix{Float64} = convert(Matrix{Float64}, modelmatrix(formula_schema_memb, df))
-    mat_memb = hcat(mat_memb, ones(Float64, nrows)) # add constant column. maybe this should be incorporated in formula but fmlogit would not expect that (always assumes constant)
 
+    if standardize
+        mat_X_mean = mean(mat_X, dims=1)
+        mat_X .-= mat_X_mean
+        mat_X_std = std(mat_X, dims=1)
+        mat_X ./= mat_X_std
+
+        mat_memb_mean = mean(mat_memb, dims=1)
+        mat_memb .-= mat_memb_mean
+        mat_memb_std = std(mat_memb, dims=1)
+        mat_memb ./= mat_memb_std
+    end
+
+    mat_memb = hcat(mat_memb, ones(Float64, nrows)) # add constant column. maybe this should be incorporated in formula but fmlogit would not expect that (always assumes constant)
 
     response_name::String, coefnames_utility::Vector{String} = StatsModels.coefnames(formula_schema)
     _, coefnames_membership = StatsModels.coefnames(formula_schema_memb)
@@ -287,6 +301,15 @@ function StatsAPI.fit(::Type{LCLmodel},
         copy(start_memb) # to prevent start from being mutated in place
     end
 
+    if standardize
+        for s in 1:n_classes
+            coefs_mlogit[:, s] .*= vec(mat_X_std)
+        end
+        for s in 1:(n_classes-1)
+            view(coefs_memb, 1:k_membership, s) .*= mat_memb_std'
+            coefs_memb[end, s] = coefs_memb[end, s] + dot((view(coefs_memb, 1:k_membership, s) ./ mat_memb_std'), mat_memb_mean')
+        end
+    end
 
     # Initialize values
 
@@ -311,51 +334,77 @@ function StatsAPI.fit(::Type{LCLmodel},
     quietly || println("Null log-likelihood: $loglik_0")
     quietly || println("Start log-likelihood: $loglik_start")
 
-    # set up objects to be defined inside the while restarted loop
-    hessian = Matrix{Float64}(undef, n_coefficients, n_coefficients)
-    vcov = Matrix{Float64}(undef, n_coefficients, n_coefficients)
-    diffresult = DiffResults.HessianResult([vec(coefs_mlogit); vec(coefs_memb)])
     iter = 1 # for inner EM algorithm loop
     converged = false
 
-    restarted = true # for restart in case of infs/NaN in Hessian (or other problems)
-    retry_count = 0
-    while restarted && retry_count < max_retries
-        restarted = false
+    if method == :em
 
-        if method == :em
+        iter = 1 # for inner EM algorithm loop
 
-            iter = 1 # for inner EM algorithm loop
+        ### split sample
 
-            ### split sample
+        function create_lcl_s(vec_id, n_classes)
+            # Get unique IDs and their first positions
+            unique_ids = unique(vec_id)
+            prop = 1 / n_classes
 
-            function create_lcl_s(vec_id, n_classes)
-                # Get unique IDs and their first positions
-                unique_ids = unique(vec_id)
-                prop = 1 / n_classes
+            # Assign random class probabilities to each ID
+            id_to_class = Dict{eltype(vec_id),Int}()
+            for id in unique_ids
+                rand_val = rand(Uniform())
+                class = findfirst(>(rand_val), cumsum(repeat([prop], n_classes)))
+                id_to_class[id] = isnothing(class) ? n_classes : class
+            end
 
-                # Assign random class probabilities to each ID
-                id_to_class = Dict{eltype(vec_id),Int}()
-                for id in unique_ids
-                    rand_val = rand(Uniform())
-                    class = findfirst(>(rand_val), cumsum(repeat([prop], n_classes)))
-                    id_to_class[id] = isnothing(class) ? n_classes : class
+            # Expand to full vector
+            [id_to_class[id] for id in vec_id]
+        end
+
+        lcl_s::Vector{Float64} = if !isnothing(varname_samplesplit)
+            df[!, Symbol(varname_samplesplit)]
+        else
+            create_lcl_s(vec_id, n_classes)
+        end
+
+        sumll::Vector{Float64} = Float64[]
+
+        for s in 1:n_classes
+            vec_chid_s = vec_chid[lcl_s.==s]
+            remap_to_indices_chid!(vec_chid_s) # mlogit would do this in the data prep step, so has to be done before calling fit_mlogit
+            # use fit_mlogit because it takes the (standardized) mat_X
+            _, coefs_mlogit[:, s], _, _, _, _, _, _, _, _, _ = fit_mlogit(mat_X[lcl_s.==s, :], vec_choice[lcl_s.==s], coefs_mlogit[:, s], vec_chid_s, ones(Float64, sum(vec_choice[lcl_s.==s])))
+        end
+
+        cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
+            n_id, vec_choice, n_classes,
+            ll_n, mat_utils, Xb_share, cond_probs_memb, log_ProbSeq_n,
+            id_map, chid_map, sumll)
+
+        quietly || println("Iteration 0 - Log likelihood: $(last(sumll))")
+
+        ### Loop
+        llincrease = 9999.9
+
+        while iter <= max_iter
+            call_mlogit_coef(s) = fit_mlogit(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, cond_probs_memb[:, s][vec_choice])
+            # Update the probability of the agent's sequence of choices
+            if multithreading
+                Threads.@threads for s in 1:n_classes
+                    _, coefs_mlogit[:, s], _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
                 end
-
-                # Expand to full vector
-                [id_to_class[id] for id in vec_id]
-            end
-
-            lcl_s::Vector{Float64} = if !isnothing(varname_samplesplit)
-                df[!, Symbol(varname_samplesplit)]
             else
-                create_lcl_s(vec_id, n_classes)
+                for s in 1:n_classes
+                    _, coefs_mlogit[:, s], _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
+                end
             end
 
-            sumll::Vector{Float64} = Float64[]
-
-            for s in 1:n_classes
-                coefs_mlogit[:, s] .= coef(mlogit(formula, df[lcl_s.==s, :]))
+            # Update the class share probabilities
+            if k_membership == 0
+                Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
+                coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
+            else
+                opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, cond_probs_memb[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), k_membership, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
+                coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), k_membership + 1, n_classes - 1)
             end
 
             cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
@@ -363,104 +412,110 @@ function StatsAPI.fit(::Type{LCLmodel},
                 ll_n, mat_utils, Xb_share, cond_probs_memb, log_ProbSeq_n,
                 id_map, chid_map, sumll)
 
-            quietly || println("Iteration 0 - Log likelihood: $(last(sumll))")
+            quietly || println("Iteration $iter - Log likelihood: $(last(sumll))")
 
-            ### Loop
-            llincrease = 9999.9
-
-            while iter <= max_iter
-                call_mlogit_coef(s) = fit_mlogit(mat_X, vec_choice, coefs_mlogit[:, s], vec_chid, cond_probs_memb[:, s][vec_choice])
-                # Update the probability of the agent's sequence of choices
-                if multithreading
-                    Threads.@threads for s in 1:n_classes
-                        _, coefficients_scaled, _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
-                        coefs_mlogit[:, s] .= coefficients_scaled
-                    end
-                else
-                    for s in 1:n_classes
-                        _, coefficients_scaled, _, _, _, _, _, _, _, _, _ = call_mlogit_coef(s)
-                        coefs_mlogit[:, s] .= coefficients_scaled
-                    end
+            # Check for convergence
+            if iter >= 6
+                llincrease = -(sumll[iter] - sumll[iter-5]) / sumll[iter-5]
+                if llincrease <= ltolerance
+                    converged = true
+                    break
                 end
-
-                # Update the class share probabilities
-                if k_membership == 0
-                    Share = sum(cond_probs_memb, dims=1) / sum(cond_probs_memb)
-                    coefs_memb .= log.(Share / Share[n_classes])[:, 1:(n_classes-1)]
-                else
-                    opt_fmlogit = Optim.optimize(theta -> loglik_fmlogit(theta, cond_probs_memb[lcl_first_by_id, :], mat_memb[lcl_first_by_id, :], fill(1.0, n_id), k_membership, n_classes; multithreading=multithreading), vec(coefs_memb), Newton(), Optim.Options(), autodiff=:forward)
-                    coefs_memb .= reshape(Optim.minimizer(opt_fmlogit), k_membership + 1, n_classes - 1)
-                end
-
-                cond_probs_ll(coefs_mlogit, coefs_memb, mat_X, mat_memb,
-                    n_id, vec_choice, n_classes,
-                    ll_n, mat_utils, Xb_share, cond_probs_memb, log_ProbSeq_n,
-                    id_map, chid_map, sumll)
-
-                quietly || println("Iteration $iter - Log likelihood: $(last(sumll))")
-
-                # Check for convergence
-                if iter >= 6
-                    llincrease = -(sumll[iter] - sumll[iter-5]) / sumll[iter-5]
-                    if llincrease <= ltolerance
-                        converged = true
-                        break
-                    end
-                end
-
-                # If not converged, restart loop
-                iter += 1
-            end
-        elseif method == :gradient
-
-            # Compute the gradient configuration
-            cfg = ForwardDiff.GradientConfig(loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{n_coefficients}())
-
-            # Define the gradient function
-            function loglik_grad!(G, theta)
-                ForwardDiff.gradient!(G, loglik_obj, theta, cfg)
             end
 
-            # Wrap function and gradient in OnceDifferentiable
-            fdf = Optim.OnceDifferentiable(loglik_obj, loglik_grad!, [vec(coefs_mlogit); vec(coefs_memb)])
+            # If not converged, restart loop
+            iter += 1
+        end
+    elseif method == :gradient
 
-            # Run optimization
-            opt = Optim.optimize(fdf, [vec(coefs_mlogit); vec(coefs_memb)], optim_method, optim_options)
+        # Compute the gradient configuration
+        cfg = ForwardDiff.GradientConfig(loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{n_coefficients}())
 
-            coefficients = Optim.minimizer(opt)
-            coefs_mlogit .= reshape(coefficients[1:(k_utility*n_classes)], k_utility, n_classes)
-            coefs_memb .= reshape(coefficients[(k_utility*n_classes+1):end], (k_membership + 1), (n_classes - 1))
-
-            converged = Optim.converged(opt)
-            iter = Optim.iterations(opt)
-        else
-            error("Unknown method. Choose :em or :gradient")
+        # Define the gradient function
+        function loglik_grad!(G, theta)
+            ForwardDiff.gradient!(G, loglik_obj, theta, cfg)
         end
 
-        
-        # TODO this chunksize calculation is not necessarily optimal. n_coefficients is definitely worse, however
-        chunksizeH::Int64 = chunksize_func(n_coefficients)
-        quietly || println("Starting Hessian calculation with $n_coefficients coefficients and a chunksize of $chunksizeH.")
-        cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{chunksizeH}())
-        diffresult = ForwardDiff.hessian!(diffresult, loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], cfgH)
+        # Wrap function and gradient in OnceDifferentiable
+        fdf = Optim.OnceDifferentiable(loglik_obj, loglik_grad!, [vec(coefs_mlogit); vec(coefs_memb)])
 
-        gradient = DiffResults.gradient(diffresult)::Vector{Float64}
-        hessian = DiffResults.hessian(diffresult)::Matrix{Float64}
+        # Run optimization
+        opt = Optim.optimize(fdf, [vec(coefs_mlogit); vec(coefs_memb)], optim_method, optim_options)
 
-        try
-            vcov = inv(hessian)
-        catch
-            @warn "Hessian could not be inverted, likely because matrix contains Infs or NaNs. Restarting.."
-            restarted = true
+        coefficients = Optim.minimizer(opt)
+        coefs_mlogit .= reshape(coefficients[1:(k_utility*n_classes)], k_utility, n_classes)
+        coefs_memb .= reshape(coefficients[(k_utility*n_classes+1):end], (k_membership + 1), (n_classes - 1))
+
+        converged = Optim.converged(opt)
+        iter = Optim.iterations(opt)
+    else
+        error("Unknown method. Choose :em or :gradient")
+    end
+
+
+    # TODO this chunksize calculation is not necessarily optimal. n_coefficients is definitely worse, however
+    chunksizeH::Int64 = chunksize_func(n_coefficients)
+    quietly || println("Starting Hessian calculation with $n_coefficients coefficients and a chunksize of $chunksizeH.")
+    diffresult = DiffResults.HessianResult([vec(coefs_mlogit); vec(coefs_memb)])
+    cfgH = ForwardDiff.HessianConfig(loglik_obj, diffresult, [vec(coefs_mlogit); vec(coefs_memb)], ForwardDiff.Chunk{chunksizeH}())
+    diffresult = ForwardDiff.hessian!(diffresult, loglik_obj, [vec(coefs_mlogit); vec(coefs_memb)], cfgH)
+
+    gradient::Vector{Float64} = DiffResults.gradient(diffresult)
+    hessian::Matrix{Float64} = DiffResults.hessian(diffresult)
+
+    if standardize
+        for s in 1:n_classes
+            coefs_mlogit[:, s] ./= vec(mat_X_std)
         end
-    end # end while restarted
+        for s in 1:(n_classes-1)
+            view(coefs_memb, 1:k_membership, s) ./= mat_memb_std'
+            # re-scale constant
+            coefs_memb[end, s] = coefs_memb[end, s] - dot(view(coefs_memb, 1:k_membership, s), mat_memb_mean')
+        end
+
+        mat_std_ext = vcat(repeat(vec(mat_X_std), outer=n_classes), repeat(vcat(vec(mat_memb_std), [1.0]), outer=n_classes - 1))
+        J = diagm(mat_std_ext)
+        for (i, mean) in enumerate(mat_memb_mean)
+            # The current 'mean' (which is mu_i for the i-th membership variable)
+            # affects the constant term of *every* membership model equation.
+            # Therefore, we loop through all (n_classes - 1) membership equations.
+            for eq_loop_idx in 0:(n_classes-2)  # Loop from 0 (for 1st eq) to (num_membership_equations - 1)
+
+                # Calculate the starting index in the full J matrix for the block of parameters
+                # belonging to the current membership equation (identified by eq_loop_idx).
+                # Each membership equation has (k_membership variables + 1 constant) parameters.
+                base_idx_for_current_memb_equation = n_classes * k_utility + eq_loop_idx * (k_membership + 1)
+
+                # Identify the row in J corresponding to the standardized constant (beta_const_std)
+                # of the current membership equation. This is the (k_membership + 1)-th
+                # parameter within this equation's specific block.
+                row_J_for_beta_const_std = base_idx_for_current_memb_equation + k_membership + 1
+
+                # Identify the column in J corresponding to the i-th original variable coefficient
+                # (beta_var_orig_i) of the current membership equation. The index 'i' comes
+                # from the outer 'enumerate(mat_memb_mean)' loop and refers to the
+                # local index (1 to k_membership) of the variable whose 'mean' we are currently processing.
+                col_J_for_beta_var_orig_i = base_idx_for_current_memb_equation + i
+
+                # Assign the mean value to the J matrix.
+                # This sets J[row_for_std_const, col_for_orig_var_i] = mu_i
+                # This fills the off-diagonal elements in the rows corresponding to the
+                # standardized constants of the membership model equations.
+                J[row_J_for_beta_const_std, col_J_for_beta_var_orig_i] = mean
+            end
+        end
+        gradient .= transpose(J) * gradient
+        hessian .= transpose(J) * hessian * J
+    end
+
+    vcov = inv(hessian)
 
     if any(diag(vcov) .< 0.0)
         @warn "Main diagonale of VCOV has negative entries. Try gradient-based optimization."
     end
 
     loglik = -DiffResults.value(diffresult)::Float64
-    
+
     # shares calculation
     for c in 1:(n_classes-1)
         Xb_share[:, c] .= mat_memb * coefs_memb[:, c]
@@ -491,7 +546,7 @@ function StatsAPI.fit(::Type{LCLmodel},
         nullloglikelihood=loglik_0,
         optim=(@isdefined opt) ? opt : nothing,
         responsename=response_name,
-        score=nothing,
+        score=gradient,
         shares=shares,
         start=zeros(k_utility * n_classes + (k_membership + 1) * (n_classes - 1)),
         startloglikelihood=loglik_start,

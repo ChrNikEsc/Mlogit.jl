@@ -32,6 +32,7 @@ df_fmlogit = CSV.read(mlogit_datadir * "fmlogit_data.csv", DataFrame)
 
 # lclogit
 df_lclogit = CSV.read(mlogit_datadir * "statadata_lclogit2_classes7_seed10329.csv", DataFrame)
+# transform!(df_lclogit, :x1 => ByRow(x -> x > 50 ? -log(x) : x) => :x2)
 
 @testset "Mlogit.jl" begin
     # mlogit
